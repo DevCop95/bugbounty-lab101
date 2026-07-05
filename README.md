@@ -36,16 +36,16 @@ siguen disponibles, pero como soporte — no como punto de entrada.
 │  SCOPE                RECON/VULN              REPORTE               │
 │  ═════                ══════════              ═══════               │
 │                                                                     │
-│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐     │
-│  │programs/  │─────▶│ bugbounty-hunter  │───▶│  report.md    │     │
-│  │*.md       │      │      .sh          │    │ (H1 template) │     │
-│  └───────────┘      └────────┬──────────┘    └───────┬───────┘     │
-│  scope check                 │                       │             │
-│  (bloquea si no              ▼                       ▼             │
-│   está documentado) ┌─────────────┐         ┌──────────────┐       │
-│                     │auto-scanner │         │  Hacktivity  │       │
-│                     │ (arsenal)   │         │  dedup check │       │
-│                     └─────────────┘         └──────────────┘       │
+│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐      │
+│  │programs/  │───▶    bugbounty-hunter  ───▶  report.md     
+│  │*.md       │      │      .sh          │    │ (H1 template) │      │
+│  └───────────┘      └────────┬──────────┘    └───────┬───────┘      │
+│  scope check                 │                       │              │
+│  (bloquea si no              ▼                       ▼              │
+│   está documentado) ┌─────────────┐         ┌──────────────┐        │
+│                     │auto-scanner │         │  Hacktivity  │        │
+│                     │ (arsenal)   │         │  dedup check │        │
+│                     └─────────────┘         └──────────────┘        │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -113,32 +113,32 @@ automáticamente contra `programs/*.md` antes de tocar el target.
 ```
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║                                                                         ║
-║  FASE 1            FASE 2            FASE 3            FASE 4          ║
-║  RECONOCIMIENTO    ESCANEO           ENUMERACIÓN       EXPLOTACIÓN     ║
+║  FASE 1            FASE 2            FASE 3            FASE 4           ║
+║  RECONOCIMIENTO    ESCANEO           ENUMERACIÓN       EXPLOTACIÓN      ║
 ║                                                                         ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐   ║
-║  │   nmap    │────▶│   nikto   │────▶│  enum4l   │────▶│  sqlmap   │   ║
-║  │   amass   │     │ gobuster  │     │  smbclnt  │     │metasploit │   ║
-║  │   dig     │     │  whatweb  │     │  ldapsrc  │     │  xsser    │   ║
-║  │   whois   │     │   wfuzz   │     │  rpcclnt  │     │  wpscan   │   ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘   ║
-║        │                │                │                │            ║
-║        ▼                ▼                ▼                ▼            ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐   ║
-║  │  theHarv  │     │   dirb    │     │ snmpwalk  │     │ msfvenom  │   ║
-║  │  recon-ng │     │   ffuf    │     │  nbtscan  │     │ searchsp  │   ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘   ║
+║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
+║  │   nmap    │───▶    nikto     ───▶│  enum4l   │───▶  sqlmap         
+║  │   amass   │     │ gobuster  │     │  smbclnt  │     │metasploit │    ║
+║  │   dig     │     │  whatweb  │     │  ldapsrc  │     │  xsser    │    ║
+║  │   whois   │     │   wfuzz   │     │  rpcclnt  │     │  wpscan   │    ║
+║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
+║        │                │                │                │             ║
+║        ▼                ▼                ▼                ▼             ║
+║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
+║  │  theHarv  │     │   dirb    │     │ snmpwalk  │     │ msfvenom  │    ║
+║  │  recon-ng │     │   ffuf    │     │  nbtscan  │     │ searchsp  │    ║
+║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
 ║                                                                         ║
 ╠═════════════════════════════════════════════════════════════════════════╣
 ║                                                                         ║
-║  FASE 5            FASE 6            FASE 7            FASE 8          ║
-║  BUSINESS LOGIC    API TESTING       CHAIN ATTACKS     REPORTE         ║
+║  FASE 5            FASE 6            FASE 7            FASE 8           ║
+║  BUSINESS LOGIC    API TESTING       CHAIN ATTACKS     REPORTE          ║
 ║                                                                         ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐   ║
-║  │auth flow  │     │  swagger  │     │CORS+CSRF  │     │    H1     │   ║
-║  │race cond  │     │  graphql  │     │SSRF+RCE   │     │  REPORT   │   ║
-║  │mass assn  │     │  nuclei   │     │IDOR+priv  │     │   .md     │   ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘   ║
+║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
+║  │auth flow  │     │  swagger  │     │CORS+CSRF  │     │    H1     │    ║
+║  │race cond  │     │  graphql  │     │SSRF+RCE   │     │  REPORT   │    ║
+║  │mass assn  │     │  nuclei   │     │IDOR+priv  │     │   .md     │    ║
+║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 ```
@@ -178,13 +178,13 @@ automáticamente contra `programs/*.md` antes de tocar el target.
 ### 🌐 WEB (20+ herramientas)
 
 ```
-┌────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────┐
 │  SCANNERS:        nikto  whatweb  wapiti  arachni  skipfish     │
 │  DIRECTORY BRUTE: gobuster  dirb  feroxbuster  dirsearch        │
 │  FUZZING:         wfuzz  ffuf  arjun  x8  paramspider           │
 │  VULNERABILITIES: sqlmap  xsser  dalfox  commix  xsstrike       │
 │  CMS:             wpscan  joomscan  droopescan  cmseek  cariddi │
-└────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 </div>
@@ -248,13 +248,13 @@ Ver plantilla completa en [`bugbounty/templates/report-template.md`](bugbounty/t
                 │ bugbounty-hunter.sh full <t>   │
                 └────────────────┬───────────────┘
                                  │
-             ┌───────────────────┼───────────────────┐
-             ▼                   ▼                   ▼
-      ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-      │ RECON/VULN   │   │ MANUAL VERIF │   │ CHAIN ATTACK │
-      │  (scripts)   │   │  (a mano)    │   │  (a mano)    │
-      └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-             └───────────────────┼───────────────────┘
+              ┌──────────────────┼──────────────────┐
+              ▼                  ▼                  ▼
+       ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+       │ RECON/VULN   │   │ MANUAL VERIF │   │ CHAIN ATTACK │
+       │  (scripts)   │   │  (a mano)    │   │  (a mano)    │
+       └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+              └──────────────────┼──────────────────┘
                                  ▼
                       ┌─────────────────────┐
                       │ Dedup en Hacktivity │
@@ -370,15 +370,15 @@ Lista completa en [`docs/recursos/learning-resources.md`](docs/recursos/learning
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
-║  ⚠️  ADVERTENCIA LEGAL                                                       ║
+║  ⚠️  ADVERTENCIA LEGAL                                                       
 ║                                                                              ║
 ║  Este lab está diseñado para bug bounty AUTORIZADO vía HackerOne.            ║
 ║                                                                              ║
-║  • Solo testea assets dentro del scope publicado del programa               ║
-║  • bugbounty-hunter.sh bloquea targets sin scope documentado en programs/   ║
-║  • El uso no autorizado de estas herramientas es ILEGAL                     ║
-║  • Respeta las exclusiones y reglas especiales de cada programa             ║
-║  • Usa siempre de manera ÉTICA y RESPONSABLE                                ║
+║  • Solo testea assets dentro del scope publicado del programa                ║
+║  • bugbounty-hunter.sh bloquea targets sin scope documentado en programs/    ║
+║  • El uso no autorizado de estas herramientas es ILEGAL                      ║
+║  • Respeta las exclusiones y reglas especiales de cada programa              ║
+║  • Usa siempre de manera ÉTICA y RESPONSABLE                                 ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -398,7 +398,7 @@ Lista completa en [`docs/recursos/learning-resources.md`](docs/recursos/learning
 │   💥 EXPLOTACIÓN        80+ herramientas   ████████████████  80%│
 │   🔧 POST-EXPLOIT       50+ herramientas   ████████████░░░░  60%│
 │                                                                 │
-│   TOTAL: 400+ herramientas categorizadas                       │
+│   TOTAL: 400+ herramientas categorizadas                        │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -411,9 +411,9 @@ Lista completa en [`docs/recursos/learning-resources.md`](docs/recursos/learning
 
 ```
 +=============================================================+
-|                                                               |
+|                                                              |
 |   dev101x  •  HackerOne Bug Bounty  •  400+ Tools            |
-|                                                               |
+|                                                              |
 +=============================================================+
 ```
 

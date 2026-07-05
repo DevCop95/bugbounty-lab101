@@ -1,12 +1,12 @@
 <div align="center">
 
 ```
- ██████╗ ███████╗██╗   ██╗ ██╗ ██████╗  ██╗██╗  ██╗
-██╔══██╗██╔════╝██║   ██║███║██╔═████╗███║╚██╗██╔╝
-██║  ██║█████╗  ██║   ██║╚██║██║██╔██║╚██║ ╚███╔╝
-██║  ██║██╔══╝  ╚██╗ ██╔╝ ██║████╔╝██║ ██║ ██╔██╗
-██████╔╝███████╗ ╚████╔╝  ██║╚██████╔╝ ██║██╔╝ ██╗
-╚═════╝ ╚══════╝  ╚═══╝   ╚═╝ ╚═════╝  ╚═╝╚═╝  ╚═╝
+          ██████╗ ███████╗██╗   ██╗ ██╗ ██████╗  ██╗██╗  ██╗
+          ██╔══██╗██╔════╝██║   ██║███║██╔═████╗███║╚██╗██╔╝
+          ██║  ██║█████╗  ██║   ██║╚██║██║██╔██║╚██║ ╚███╔╝
+          ██║  ██║██╔══╝  ╚██╗ ██╔╝ ██║████╔╝██║ ██║ ██╔██╗
+          ██████╔╝███████╗ ╚████╔╝  ██║╚██████╔╝ ██║██╔╝ ██╗
+          ╚═════╝ ╚══════╝  ╚═══╝   ╚═╝ ╚═════╝  ╚═╝╚═╝  ╚═╝
 ```
 
 # BUG BOUNTY LAB
@@ -32,16 +32,16 @@ A workspace built around the **real bug bounty workflow on HackerOne**: choose a
 │  SCOPE                RECON/VULN              REPORT                │
 │  ═════                ══════════              ══════                │
 │                                                                     │
-│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐     │
-│  │programs/  │────▶  bugbounty-hunter  ───▶  report.md      │     │
-│  │*.md       │      │      .sh          │    │ (H1 template) │     │
-│  └───────────┘      └────────┬──────────┘    └───────┬───────┘     │
-│  scope check                 │                       │             │
-│  (blocks if not              ▼                       ▼             │
-│   documented)       ┌─────────────┐         ┌──────────────┐       │
-│                     │auto-scanner │         │  Hacktivity  │       │
-│                     │ (arsenal)   │         │  dedup check │       │
-│                     └─────────────┘         └──────────────┘       │
+│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐      │
+│  │programs/  │────▶  bugbounty-hunter   ───▶  report.md     │      │
+│  │*.md       │      │      .sh          │    │ (H1 template) │      │
+│  └───────────┘      └────────┬──────────┘    └───────┬───────┘      │
+│  scope check                 │                       │              │
+│  (blocks if not              ▼                       ▼              │
+│   documented)       ┌─────────────┐         ┌──────────────┐        │
+│                     │auto-scanner │         │  Hacktivity  │        │
+│                     │ (arsenal)   │         │  dedup check │        │
+│                     └─────────────┘         └──────────────┘        │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -107,32 +107,32 @@ All active scanning commands in `bugbounty-hunter.sh` verify scope against `prog
 ```
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║                                                                         ║
-║  PHASE 1          PHASE 2          PHASE 3          PHASE 4            ║
-║  RECON            SCANNING         ENUMERATION      EXPLOITATION       ║
+║  PHASE 1          PHASE 2          PHASE 3          PHASE 4             ║
+║  RECON            SCANNING         ENUMERATION      EXPLOITATION        ║
 ║                                                                         ║
-║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
-║  │   nmap    │──▶│  nikto    │──▶│  enum4l   │──▶│  sqlmap   │        ║
-║  │   amass   │   │ gobuster  │   │  smbclnt  │   │metasploit │        ║
-║  │   dig     │   │  whatweb  │   │  ldapsrc  │   │  xsser    │        ║
-║  │   whois   │   │   wfuzz   │   │  rpcclnt  │   │  wpscan   │        ║
-║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
-║        │              │               │               │                ║
-║        ▼              ▼               ▼               ▼                ║
-║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
-║  │  theHarv  │   │   dirb    │   │ snmpwalk  │   │ msfvenom  │        ║
-║  │  recon-ng │   │   ffuf    │   │  nbtscan  │   │ searchsp  │        ║
-║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐          ║
+║  │   nmap    │─▶   nikto     ──▶  enum4l     ──▶  sqlmap              
+║  │   amass   │   │ gobuster  │   │  smbclnt  │   │metasploit │          ║
+║  │   dig     │   │  whatweb  │   │  ldapsrc  │   │  xsser    │          ║
+║  │   whois   │   │   wfuzz   │   │  rpcclnt  │   │  wpscan   │          ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘          ║
+║        │              │               │               │                 ║
+║        ▼              ▼               ▼               ▼                 ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐          ║
+║  │  theHarv  │   │   dirb    │   │ snmpwalk  │   │ msfvenom  │          ║
+║  │  recon-ng │   │   ffuf    │   │  nbtscan  │   │ searchsp  │          ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘          ║
 ║                                                                         ║
 ╠═════════════════════════════════════════════════════════════════════════╣
 ║                                                                         ║
-║  PHASE 5          PHASE 6          PHASE 7          PHASE 8            ║
-║  BUSINESS LOGIC   API TESTING      CHAIN ATTACKS    REPORT             ║
+║  PHASE 5          PHASE 6          PHASE 7          PHASE 8             ║
+║  BUSINESS LOGIC   API TESTING      CHAIN ATTACKS    REPORT              ║
 ║                                                                         ║
-║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
-║  │auth flow  │   │  swagger  │   │CORS+CSRF  │   │    H1     │        ║
-║  │race cond  │   │  graphql  │   │SSRF+RCE   │   │  REPORT   │        ║
-║  │mass assn  │   │  nuclei   │   │IDOR+priv  │   │   .md     │        ║
-║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐          ║
+║  │auth flow  │   │  swagger  │   │CORS+CSRF  │   │    H1     │          ║
+║  │race cond  │   │  graphql  │   │SSRF+RCE   │   │  REPORT   │          ║
+║  │mass assn  │   │  nuclei   │   │IDOR+priv  │   │   .md     │          ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘          ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 ```
@@ -402,9 +402,9 @@ Full list at [`docs/recursos/learning-resources.md`](docs/recursos/learning-reso
 
 ```
 +=============================================================+
-|                                                              |
+|                                                             |
 |   Bug Bounty Lab  •  HackerOne  •  400+ Tools               |
-|                                                              |
+|                                                             |
 +=============================================================+
 ```
 

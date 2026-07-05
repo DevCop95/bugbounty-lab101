@@ -9,11 +9,11 @@
 ╚═════╝ ╚══════╝  ╚═══╝   ╚═╝ ╚═════╝  ╚═╝╚═╝  ╚═╝
 ```
 
-# 🛡️ BUG BOUNTY LAB — dev101x
+# BUG BOUNTY LAB
 
-### **Laboratorio de Caza de Vulnerabilidades para HackerOne**
+### Bug Bounty Workspace for HackerOne Researchers
 
-[![HackerOne](https://img.shields.io/badge/HackerOne-dev101x-000000?style=for-the-badge&logo=hackerone&logoColor=white)](https://hackerone.com/)
+[![HackerOne](https://img.shields.io/badge/HackerOne-Workbench-000000?style=for-the-badge&logo=hackerone&logoColor=white)](https://hackerone.com/)
 [![Kali Linux](https://img.shields.io/badge/Kali-Linux-557C94?style=for-the-badge&logo=kalilinux&logoColor=white)](https://www.kali.org/)
 [![Tools](https://img.shields.io/badge/400%2B-Tools-FF6B35?style=for-the-badge)]()
 [![Scope Safe](https://img.shields.io/badge/Scope-Enforced-00CA4E?style=for-the-badge)]()
@@ -22,134 +22,128 @@
 
 ---
 
-## 🎯 ¿QUÉ ES?
+## What Is This?
 
-Un lab centrado en el **flujo de trabajo real de bug bounty en HackerOne**:
-elegir programa, documentar scope, escanear sin salirse de los límites,
-encadenar hallazgos y reportar de forma que un triager lo acepte rápido. El
-arsenal de 400+ herramientas de pentesting genérico y el lab de VMs locales
-siguen disponibles, pero como soporte — no como punto de entrada.
+A workspace built around the **real bug bounty workflow on HackerOne**: choose a program, document scope, scan within boundaries, chain findings, and report in a format triagers accept fast. The 400+ generic pentesting arsenal and local VM lab are available as support — not the entry point.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                                                                     │
-│  SCOPE                RECON/VULN              REPORTE               │
-│  ═════                ══════════              ═══════               │
+│  SCOPE                RECON/VULN              REPORT                │
+│  ═════                ══════════              ══════                │
 │                                                                     │
-│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐      │
-│  │programs/  │───▶    bugbounty-hunter  ───▶  report.md     
-│  │*.md       │      │      .sh          │    │ (H1 template) │      │
-│  └───────────┘      └────────┬──────────┘    └───────┬───────┘      │
-│  scope check                 │                       │              │
-│  (bloquea si no              ▼                       ▼              │
-│   está documentado) ┌─────────────┐         ┌──────────────┐        │
-│                     │auto-scanner │         │  Hacktivity  │        │
-│                     │ (arsenal)   │         │  dedup check │        │
-│                     └─────────────┘         └──────────────┘        │
+│  ┌───────────┐      ┌───────────────────┐    ┌───────────────┐     │
+│  │programs/  │────▶  bugbounty-hunter  ───▶  report.md      │     │
+│  │*.md       │      │      .sh          │    │ (H1 template) │     │
+│  └───────────┘      └────────┬──────────┘    └───────┬───────┘     │
+│  scope check                 │                       │             │
+│  (blocks if not              ▼                       ▼             │
+│   documented)       ┌─────────────┐         ┌──────────────┐       │
+│                     │auto-scanner │         │  Hacktivity  │       │
+│                     │ (arsenal)   │         │  dedup check │       │
+│                     └─────────────┘         └──────────────┘       │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ⚡ INICIO RÁPIDO (bug bounty real)
+## Quick Start
 
-### 1. Permisos
+### 1. Permissions
 ```bash
-cd /root/vscode/systems/promt/pentesting-lab
+cd pentesting-lab
 chmod +x bugbounty/*.sh auto-scanner/*.sh
 ```
 
-### 2. Documentar el scope del programa
+### 2. Document program scope
 ```bash
 cd bugbounty
-./bugbounty-hunter.sh new nombre-programa
-# Editar ../programs/nombre-programa.md con el scope EXACTO de la política H1
+./bugbounty-hunter.sh new program-name
+# Edit ../programs/program-name.md with the EXACT scope from the H1 policy
 ```
 
-### 3. Verificar scope y escanear
+### 3. Verify scope and scan
 ```bash
-./bugbounty-hunter.sh scope target.com     # debe decir "Scope OK" antes de seguir
-./bugbounty-hunter.sh full target.com       # recon -> vuln -> brute -> secrets -> api -> reporte
+./bugbounty-hunter.sh scope target.com     # must say "Scope OK" before proceeding
+./bugbounty-hunter.sh full target.com       # recon -> vuln -> brute -> secrets -> api -> report
 ```
 
-### 4. Reportar
+### 4. Report
 ```bash
 ./bugbounty-hunter.sh report target.com
-# Completar bugbounty/reports/target.com/report-YYYYMMDD.md con el template de H1
+# Complete bugbounty/reports/target.com/report-YYYYMMDD.md with the H1 template
 ```
 
-Antes de enviar, lee [`docs/hackerone-workflow.md`](docs/hackerone-workflow.md)
-(dedup en Hacktivity, calidad de reporte, qué hacer post-envío).
+Before submitting, read [`docs/hackerone-workflow.md`](docs/hackerone-workflow.md) (Hacktivity dedup, report quality, post-submission steps).
 
 ---
 
-## 🚀 COMANDOS PRINCIPALES
+## Main Commands
 
 <div align="center">
 
-| Comando | Descripción | Ejemplo |
+| Command | Description | Example |
 |---------|-------------|---------|
-| `bugbounty-hunter.sh new <prog>` | 📋 Crear scope tracker de un programa | `./bugbounty-hunter.sh new acme-corp` |
-| `bugbounty-hunter.sh scope <target>` | 🛑 Verificar que un target está en scope | `./bugbounty-hunter.sh scope target.com` |
-| `bugbounty-hunter.sh full <target>` | 🔍 Pipeline completo (recon→reporte) | `./bugbounty-hunter.sh full target.com` |
-| `bugbounty-hunter.sh recon <target>` | 🕵️ Solo reconocimiento | `./bugbounty-hunter.sh recon target.com` |
-| `bugbounty-hunter.sh report <target>` | 📝 Generar reporte con template H1 | `./bugbounty-hunter.sh report target.com` |
-| `pentest.sh <url>` | 🛠️ Arsenal genérico completo (400+ tools) | `pentest.sh https://target.com` |
-| `pentest.sh matrix` | 🗺️ Matriz completa de herramientas | `pentest.sh matrix` |
-| `pentest.sh search <función>` | 🔎 Buscar herramienta en el arsenal | `pentest.sh search sql_injection` |
-| `pentest.sh express <url>` | ⚡ Escaneo express con el arsenal | `pentest.sh express https://target.com` |
-| `pentest.sh install` | 📥 Instalar herramientas que falten | `pentest.sh install` |
+| `bugbounty-hunter.sh new <prog>` | Create scope tracker for a program | `./bugbounty-hunter.sh new acme-corp` |
+| `bugbounty-hunter.sh scope <target>` | Verify target is in scope | `./bugbounty-hunter.sh scope target.com` |
+| `bugbounty-hunter.sh full <target>` | Full pipeline (recon to report) | `./bugbounty-hunter.sh full target.com` |
+| `bugbounty-hunter.sh recon <target>` | Recon only | `./bugbounty-hunter.sh recon target.com` |
+| `bugbounty-hunter.sh report <target>` | Generate report with H1 template | `./bugbounty-hunter.sh report target.com` |
+| `pentest.sh <url>` | Generic arsenal (400+ tools) | `pentest.sh https://target.com` |
+| `pentest.sh matrix` | Full tool matrix | `pentest.sh matrix` |
+| `pentest.sh search <function>` | Search for a tool | `pentest.sh search sql_injection` |
+| `pentest.sh express <url>` | Express scan | `pentest.sh express https://target.com` |
+| `pentest.sh install` | Install missing tools | `pentest.sh install` |
 
 </div>
 
-Todos los comandos de escaneo activo de `bugbounty-hunter.sh` verifican scope
-automáticamente contra `programs/*.md` antes de tocar el target.
+All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target.
 
 ---
 
-## 🗺️ MATRIZ DE HERRAMIENTAS POR FASE
+## Tool Matrix by Phase
 
 ```
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║                                                                         ║
-║  FASE 1            FASE 2            FASE 3            FASE 4           ║
-║  RECONOCIMIENTO    ESCANEO           ENUMERACIÓN       EXPLOTACIÓN      ║
+║  PHASE 1          PHASE 2          PHASE 3          PHASE 4            ║
+║  RECON            SCANNING         ENUMERATION      EXPLOITATION       ║
 ║                                                                         ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
-║  │   nmap    │───▶    nikto     ───▶│  enum4l   │───▶  sqlmap         
-║  │   amass   │     │ gobuster  │     │  smbclnt  │     │metasploit │    ║
-║  │   dig     │     │  whatweb  │     │  ldapsrc  │     │  xsser    │    ║
-║  │   whois   │     │   wfuzz   │     │  rpcclnt  │     │  wpscan   │    ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
-║        │                │                │                │             ║
-║        ▼                ▼                ▼                ▼             ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
-║  │  theHarv  │     │   dirb    │     │ snmpwalk  │     │ msfvenom  │    ║
-║  │  recon-ng │     │   ffuf    │     │  nbtscan  │     │ searchsp  │    ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
+║  │   nmap    │──▶│  nikto    │──▶│  enum4l   │──▶│  sqlmap   │        ║
+║  │   amass   │   │ gobuster  │   │  smbclnt  │   │metasploit │        ║
+║  │   dig     │   │  whatweb  │   │  ldapsrc  │   │  xsser    │        ║
+║  │   whois   │   │   wfuzz   │   │  rpcclnt  │   │  wpscan   │        ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
+║        │              │               │               │                ║
+║        ▼              ▼               ▼               ▼                ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
+║  │  theHarv  │   │   dirb    │   │ snmpwalk  │   │ msfvenom  │        ║
+║  │  recon-ng │   │   ffuf    │   │  nbtscan  │   │ searchsp  │        ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
 ║                                                                         ║
 ╠═════════════════════════════════════════════════════════════════════════╣
 ║                                                                         ║
-║  FASE 5            FASE 6            FASE 7            FASE 8           ║
-║  BUSINESS LOGIC    API TESTING       CHAIN ATTACKS     REPORTE          ║
+║  PHASE 5          PHASE 6          PHASE 7          PHASE 8            ║
+║  BUSINESS LOGIC   API TESTING      CHAIN ATTACKS    REPORT             ║
 ║                                                                         ║
-║  ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐    ║
-║  │auth flow  │     │  swagger  │     │CORS+CSRF  │     │    H1     │    ║
-║  │race cond  │     │  graphql  │     │SSRF+RCE   │     │  REPORT   │    ║
-║  │mass assn  │     │  nuclei   │     │IDOR+priv  │     │   .md     │    ║
-║  └───────────┘     └───────────┘     └───────────┘     └───────────┘    ║
+║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐        ║
+║  │auth flow  │   │  swagger  │   │CORS+CSRF  │   │    H1     │        ║
+║  │race cond  │   │  graphql  │   │SSRF+RCE   │   │  REPORT   │        ║
+║  │mass assn  │   │  nuclei   │   │IDOR+priv  │   │   .md     │        ║
+║  └───────────┘   └───────────┘   └───────────┘   └───────────┘        ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## 📦 HERRAMIENTAS POR CATEGORÍA (auto-scanner/ — arsenal de soporte)
+## Tools by Category (auto-scanner/ — support arsenal)
 
 <div align="center">
 
-### 🔍 RECONOCIMIENTO (50+ herramientas)
+### Reconnaissance (50+ tools)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -175,7 +169,7 @@ automáticamente contra `programs/*.md` antes de tocar el target.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 🌐 WEB (20+ herramientas)
+### Web (20+ tools)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -191,7 +185,7 @@ automáticamente contra `programs/*.md` antes de tocar el target.
 
 ---
 
-## 📈 EJEMPLO DE REPORTE (formato HackerOne)
+## Report Example (HackerOne format)
 
 ```markdown
 # Bug Bounty Report
@@ -200,10 +194,10 @@ automáticamente contra `programs/*.md` antes de tocar el target.
 HackerOne
 
 ## Program
-[nombre del programa]
+[program name]
 
 ## Researcher
-dev101x
+[your-handle]
 
 ## Target
 prime.example.com
@@ -212,35 +206,35 @@ prime.example.com
 CWE-538: Insertion of Sensitive Information into Externally-Accessible File
 
 ## Executive Summary
-S3 bucket con listing habilitado expone N archivos sin autenticación,
-incluyendo documentos internos de RRHH.
+S3 bucket with listing enabled exposes N files without authentication,
+including internal HR documents.
 
 ## Steps to Reproduce
 1. curl -k https://prime.example.com/file-service/static/
 2. ...
 
 ## Impact
-[Impacto de negocio concreto, no genérico]
+[Concrete business impact, not generic]
 ```
 
-Ver plantilla completa en [`bugbounty/templates/report-template.md`](bugbounty/templates/report-template.md).
+Full template at [`bugbounty/templates/report-template.md`](bugbounty/templates/report-template.md).
 
 ---
 
-## 🛡️ FLUJO DE TRABAJO
+## Workflow
 
 ```
                       ┌─────────────────────┐
-                      │  Elegir programa H1 │
+                      │  Choose H1 Program  │
                       └──────────┬──────────┘
                                  ▼
                       ┌─────────────────────┐
                       │ bugbounty-hunter.sh │
-                      │   new <programa>    │
+                      │   new <program>     │
                       └──────────┬──────────┘
                                  ▼
                       ┌─────────────────────┐
-                      │ Documentar scope en │
+                      │  Document scope in  │
                       │   programs/*.md     │
                       └──────────┬──────────┘
                                  ▼
@@ -252,153 +246,150 @@ Ver plantilla completa en [`bugbounty/templates/report-template.md`](bugbounty/t
               ▼                  ▼                  ▼
        ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
        │ RECON/VULN   │   │ MANUAL VERIF │   │ CHAIN ATTACK │
-       │  (scripts)   │   │  (a mano)    │   │  (a mano)    │
+       │  (scripts)   │   │  (manual)    │   │  (manual)    │
        └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
               └──────────────────┼──────────────────┘
                                  ▼
                       ┌─────────────────────┐
-                      │ Dedup en Hacktivity │
+                      │  Dedup in Hacktivity│
                       └──────────┬──────────┘
                                  ▼
                       ┌─────────────────────┐
-                      │  Enviar reporte H1  │
+                      │  Submit H1 Report   │
                       └─────────────────────┘
 ```
 
-Ver metodología completa en [`docs/hackerone-workflow.md`](docs/hackerone-workflow.md).
+Full methodology at [`docs/hackerone-workflow.md`](docs/hackerone-workflow.md).
 
 ---
 
-## 💾 PRACTICAR SIN TOCAR UN PROGRAMA REAL
+## Practice Without Touching Real Programs
 
-`legacy-vm-practice/` es tuyo: IPs privadas que tú levantas, sin scope de
-terceros que respetar. Úsalo para aprender técnicas nuevas antes de aplicarlas
-en un programa real.
+`legacy-vm-practice/` is yours: private IPs you spin up, no third-party scope to respect. Use it to learn new techniques before applying them to a real program.
 
 ```bash
 cd legacy-vm-practice
-./scripts/setup_network.sh   # requiere sudo
+./scripts/setup_network.sh   # requires sudo
 ./scripts/download_vms.sh
 ./scripts/start_lab.sh
 ./scripts/verify_lab.sh
 ```
 
-Ver `legacy-vm-practice/README.md` y `legacy-vm-practice/docs/quickstart.md`.
+See `legacy-vm-practice/README.md` and `legacy-vm-practice/docs/quickstart.md`.
 
 ---
 
-## 📁 ESTRUCTURA DEL PROYECTO
+## Project Structure
 
 ```
-pentesting-lab/
+bugbounty-lab/
 │
-├── 📄 README.md                    # Este archivo — overview + guía de uso
+├── README.md                       # This file — overview + usage guide
 │
-├── 📂 programs/                    # 📋 Scope tracker: un .md por programa H1
-│   ├── 📄 README.md
-│   └── 📄 _template.md
+├── programs/                       # Scope tracker: one .md per H1 program
+│   ├── README.md
+│   └── _template.md
 │
-├── 📂 bugbounty/                   # 🎯 Motor principal de bug bounty
-│   ├── 📄 bugbounty-hunter.sh      # scope/new/recon/vuln/brute/secrets/api/report
-│   ├── 📄 QUICK-REFERENCE.md       # Comandos, payloads, bounty por severidad
-│   ├── 📂 templates/report-template.md
-│   └── 📂 reports/<target>/        # Salida de cada fase + reporte final
+├── bugbounty/                      # Core bug bounty engine
+│   ├── bugbounty-hunter.sh         # scope/new/recon/vuln/brute/secrets/api/report
+│   ├── QUICK-REFERENCE.md          # Commands, payloads, bounty by severity
+│   ├── templates/report-template.md
+│   └── reports/<target>/           # Output per phase + final report
 │
-├── 📂 auto-scanner/                # 🤖 Arsenal genérico (400+ tools, no H1-específico)
-│   ├── 📄 pentest.sh               # Comando unificado (incl. `pentest.sh bounty ...`)
-│   ├── 📂 tools/registry.sh
-│   ├── 📂 burp-integration/
-│   └── 📂 reports/
+├── auto-scanner/                   # Generic arsenal (400+ tools, not H1-specific)
+│   ├── pentest.sh                  # Unified command (incl. `pentest.sh bounty ...`)
+│   ├── tools/registry.sh
+│   ├── burp-integration/
+│   └── reports/
 │
-├── 📂 docs/
-│   ├── 📄 hackerone-workflow.md    # Metodología H1: elegir programa, dedup, calidad
-│   ├── 📄 ai-assisted-code-review.md  # Revisión de código/JS asistida por AI
-│   ├── 📄 known-cve-watchlist.md   # CVEs más reportados en Hacktivity
-│   ├── 📄 known-cwe-watchlist.md   # Clases de vuln más reportadas en Hacktivity
-│   └── 📂 recursos/learning-resources.md
+├── docs/
+│   ├── hackerone-workflow.md       # H1 methodology: choose program, dedup, quality
+│   ├── ai-assisted-code-review.md  # AI-assisted code/JS review
+│   ├── known-cve-watchlist.md      # Most reported CVEs in Hacktivity
+│   ├── known-cwe-watchlist.md      # Most reported vuln classes in Hacktivity
+│   └── recursos/learning-resources.md
 │
-└── 📂 legacy-vm-practice/          # 💾 Lab clásico de VMs (DVWA, Metasploitable...)
+└── legacy-vm-practice/             # Classic VM lab (DVWA, Metasploitable...)
 ```
 
 ---
 
-## ⚠️ REGLAS IMPORTANTES
+## Important Rules
 
-1. **Nunca escanees un asset que no esté en `programs/<programa>.md` como In Scope.** `bugbounty-hunter.sh` lo bloquea por defecto — `FORCE=1` es una señal de que falta documentar el scope, no un atajo normal.
-2. **Respeta las exclusiones y reglas especiales de cada programa** (rate limits, tipos de vuln excluidos, cuentas de prueba).
-3. **Busca duplicados en Hacktivity antes de reportar.**
-4. **No ejecutes acciones destructivas** contra targets reales — ver el checklist en `bugbounty/templates/report-template.md`.
-5. **`legacy-vm-practice/` es tuyo**: IPs privadas que tú levantas, sin scope de terceros. Úsalo para aprender técnicas nuevas antes de aplicarlas en un programa.
+1. **Never scan an asset that is not documented as In Scope in `programs/<program>.md`.** `bugbounty-hunter.sh` blocks it by default — `FORCE=1` is a signal that scope is missing, not a normal shortcut.
+2. **Respect each program's exclusions and special rules** (rate limits, excluded vuln types, test accounts).
+3. **Check for duplicates in Hacktivity before reporting.**
+4. **Do not run destructive actions** against real targets — see the checklist in `bugbounty/templates/report-template.md`.
+5. **`legacy-vm-practice/` is yours**: private IPs you spin up, no third-party scope. Use it to learn new techniques.
 
 ---
 
-## 🔧 SOLUCIÓN DE PROBLEMAS
+## Troubleshooting
 
-**`bugbounty-hunter.sh` dice "No hay archivo de scope"**
-Corre `./bugbounty-hunter.sh new <programa>` y agrega el dominio a la sección
-`## In Scope` del archivo generado en `programs/`.
+**`bugbounty-hunter.sh` says "No scope file"**
+Run `./bugbounty-hunter.sh new <program>` and add the domain to the `## In Scope` section of the generated file in `programs/`.
 
-**Faltan herramientas (subfinder, nuclei, httpx, etc.)**
+**Missing tools (subfinder, nuclei, httpx, etc.)**
 ```bash
 ./auto-scanner/pentest.sh install
 ```
 
-**El lab de VMs no arranca**
-Ver troubleshooting en `legacy-vm-practice/README.md` (Host-Only Adapter, NAT, firewall).
+**VM lab won't start**
+See troubleshooting in `legacy-vm-practice/README.md` (Host-Only Adapter, NAT, firewall).
 
 ---
 
-## 🎓 RECURSOS DE APRENDIZAJE
+## Learning Resources
 
 <div align="center">
 
-| Recurso | Enfoque |
-|---------|---------|
-| [Hacker101](https://www.hacker101.com/) | CTFs + videos de HackerOne, badges para programas privados |
-| [HackerOne Hacktivity](https://hackerone.com/hacktivity) | Reportes públicos — estudiar calidad y evitar duplicados |
-| [HackerOne Directory](https://hackerone.com/directory/programs) | Elegir programa por scope y estadísticas de respuesta |
-| [PortSwigger Web Security Academy](https://portswigger.net/web-security) | Fundamentos técnicos de vulnerabilidades web |
+| Resource | Focus |
+|----------|-------|
+| [Hacker101](https://www.hacker101.com/) | CTFs + HackerOne videos, badges for private programs |
+| [HackerOne Hacktivity](https://hackerone.com/hacktivity) | Public reports — study quality and avoid duplicates |
+| [HackerOne Directory](https://hackerone.com/directory/programs) | Choose program by scope and response stats |
+| [PortSwigger Web Security Academy](https://portswigger.net/web-security) | Technical fundamentals of web vulnerabilities |
 
 </div>
 
-Lista completa en [`docs/recursos/learning-resources.md`](docs/recursos/learning-resources.md).
+Full list at [`docs/recursos/learning-resources.md`](docs/recursos/learning-resources.md).
 
 ---
 
-## ⚠️ DISCLAIMER
+## Disclaimer
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
-║  ⚠️  ADVERTENCIA LEGAL                                                       
+║  WARNING                                                                     ║
 ║                                                                              ║
-║  Este lab está diseñado para bug bounty AUTORIZADO vía HackerOne.            ║
+║  This lab is designed for AUTHORIZED bug bounty via HackerOne.               ║
 ║                                                                              ║
-║  • Solo testea assets dentro del scope publicado del programa                ║
-║  • bugbounty-hunter.sh bloquea targets sin scope documentado en programs/    ║
-║  • El uso no autorizado de estas herramientas es ILEGAL                      ║
-║  • Respeta las exclusiones y reglas especiales de cada programa              ║
-║  • Usa siempre de manera ÉTICA y RESPONSABLE                                 ║
+║  Only test assets within the program's published scope                       ║
+║  bugbounty-hunter.sh blocks targets without documented scope in programs/    ║
+║  Unauthorized use of these tools is ILLEGAL                                  ║
+║  Respect each program's exclusions and special rules                         ║
+║  Always use these tools ETHICALLY and RESPONSIBLY                            ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## 📊 ESTADÍSTICAS DEL ARSENAL
+## Arsenal Stats
 
 <div align="center">
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
-│   🔍 RECONOCIMIENTO    200+ herramientas   ████████████████ 100%│
-│   📋 ENUMERACIÓN        60+ herramientas   ██████████░░░░░░  60%│
-│   🌐 WEB                20+ herramientas   ████░░░░░░░░░░░░  20%│
-│   💥 EXPLOTACIÓN        80+ herramientas   ████████████████  80%│
-│   🔧 POST-EXPLOIT       50+ herramientas   ████████████░░░░  60%│
+│   RECON              200+ tools   ████████████████ 100%         │
+│   ENUMERATION         60+ tools   ██████████░░░░░░  60%         │
+│   WEB                 20+ tools   ████░░░░░░░░░░░░  20%         │
+│   EXPLOITATION        80+ tools   ████████████████  80%         │
+│   POST-EXPLOIT        50+ tools   ████████████░░░░  60%         │
 │                                                                 │
-│   TOTAL: 400+ herramientas categorizadas                        │
+│   TOTAL: 400+ categorized tools                                 │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -412,11 +403,11 @@ Lista completa en [`docs/recursos/learning-resources.md`](docs/recursos/learning
 ```
 +=============================================================+
 |                                                              |
-|   dev101x  •  HackerOne Bug Bounty  •  400+ Tools            |
+|   Bug Bounty Lab  •  HackerOne  •  400+ Tools               |
 |                                                              |
 +=============================================================+
 ```
 
-**Happy hunting.** 🎯
+**Happy hunting.**
 
 </div>

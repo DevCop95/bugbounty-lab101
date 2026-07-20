@@ -1,19 +1,25 @@
-name: ShellCheck
+name: Security and Tests
 
 on:
   push:
-    paths:
-      - '**/*.sh'
   pull_request:
-    paths:
-      - '**/*.sh'
+
+permissions:
+  contents: read
 
 jobs:
   shellcheck:
     name: Lint Shell Scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install ShellCheck
         run: sudo apt-get install -y shellcheck
@@ -43,3 +49,14 @@ jobs:
           echo "=== Bash Syntax Check ==="
           find . -name "*.sh" -not -path "./.git/*" -exec bash -n {} \;
           echo "All scripts have valid syntax."
+
+      - name: Python compile and tests
+        run: |
+          python3 -m compileall -q scripts auto-scanner/burp-integration tests
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Functional shell tests
+        run: bash tests/test-shell-scope.sh
+
+      - name: Reject tracked raw evidence
+        run: bash scripts/check-sensitive-files.sh

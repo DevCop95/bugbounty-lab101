@@ -3,7 +3,7 @@
 # Bug Bounty Hunter - Complete Framework
 # ============================================
 
-set -o pipefail
+set -uo pipefail
 
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -18,7 +18,8 @@ BUGBOUNTY_DIR="$SCRIPT_DIR"
 REPORTS_DIR="$BUGBOUNTY_DIR/reports"
 TARGETS_DIR="$BUGBOUNTY_DIR/targets"
 NOTES_DIR="$BUGBOUNTY_DIR/notes"
-PROGRAMS_DIR="$BUGBOUNTY_DIR/../programs"
+# shellcheck source=../auto-scanner/lib/common.sh
+source "$BUGBOUNTY_DIR/../auto-scanner/lib/common.sh"
 
 # HackerOne handle - override with: BB_RESEARCHER=otro-handle ./bugbounty-hunter.sh ...
 RESEARCHER="${BB_RESEARCHER:-dev101x}"
@@ -47,46 +48,20 @@ print_banner() {
 # to the program). Use 'new' to create a program scope file.
 
 check_scope() {
-    local TARGET="$1"
-    local MATCH=""
-    local f
+    local target="${1:-}"
+    local result
 
-    if [ -z "$TARGET" ]; then
+    if [ -z "$target" ]; then
         echo -e "${RED}[!] Target is missing${NC}"
         return 1
     fi
 
-    # Only counts as "in scope" if the target appears within the
-    # "## In Scope" section of the file — a match in any other part (contact
-    # email, handle URL, notes, etc.) does NOT count as valid scope.
-    for f in "$PROGRAMS_DIR"/*.md; do
-        [ -f "$f" ] || continue
-        [ "$(basename "$f")" = "_template.md" ] && continue
-        if awk '/^## In Scope/{flag=1; next} /^## /{flag=0} flag' "$f" | grep -qF -- "$TARGET"; then
-            MATCH="$f"
-            break
-        fi
-    done
-
-    if [ -z "$MATCH" ]; then
-        echo -e "${RED}[!] No scope file for '$TARGET' in $PROGRAMS_DIR${NC}"
-        echo -e "${YELLOW}    Create one first:  $0 new <program-name>${NC}"
-        echo -e "${YELLOW}    and add '$TARGET' to its 'In Scope' section.${NC}"
-        if [ "$FORCE" != "1" ]; then
-            echo -e "${RED}    Aborting. Only use FORCE=1 if you have explicit authorization outside a formal program.${NC}"
-            return 1
-        fi
-        echo -e "${YELLOW}    FORCE=1 active, continuing without scope file.${NC}"
-        return 0
-    fi
-
-    if awk '/## Out of Scope/{flag=1; next} /^## /{flag=0} flag' "$MATCH" | grep -qF -- "$TARGET"; then
-        echo -e "${RED}[!] '$TARGET' is listed as OUT OF SCOPE in $MATCH. Aborting.${NC}"
+    if ! result=$(python3 "$SCOPE_GUARD" --programs-dir "$PROGRAMS_DIR" "$target"); then
+        echo -e "${RED}[!] Scope denied for '$target'. Aborting.${NC}"
         return 1
     fi
-
-    echo -e "${GREEN}[✓] Scope OK — $TARGET covered by $(basename "$MATCH")${NC}"
-    return 0
+    SCOPE_TARGET="${result%%$'\t'*}"
+    echo -e "${GREEN}[✓] Scope OK - $SCOPE_TARGET covered by $(basename "${result#*$'\t'}")${NC}"
 }
 
 # ============================================
@@ -100,6 +75,11 @@ new_program() {
 
     if [ -z "$NAME" ]; then
         echo -e "${RED}Usage: $0 new <program-name>${NC}"
+        return 1
+    fi
+
+    if [[ ! "$NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
+        echo -e "${RED}[!] Program name may only contain letters, numbers, dots, underscores, and hyphens.${NC}"
         return 1
     fi
 
@@ -161,7 +141,8 @@ resolve_check() {
     local first_local
     first_local="$(echo "$LOCAL_IPS" | head -1)"
     
-    local probe_tmp="$TEMP_DIR/probe.tmp"
+    local probe_tmp
+    probe_tmp=$(mktemp "${TMPDIR:-/tmp}/bblab-probe.XXXXXX")
     # shellcheck disable=SC2064
     trap "rm -f '$probe_tmp'" RETURN
 
@@ -200,6 +181,7 @@ resolve_check() {
 reconnaissance() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/recon"
+    local TARGET_REGEX="${TARGET//./\\.}"
     
     mkdir -p "$OUTPUT_DIR"
     
@@ -209,20 +191,26 @@ reconnaissance() {
     subfinder -d "$TARGET" -o "$OUTPUT_DIR/subdomains.txt" 2>/dev/null
     amass enum -passive -d "$TARGET" >> "$OUTPUT_DIR/subdomains.txt" 2>/dev/null
     sort -u "$OUTPUT_DIR/subdomains.txt" -o "$OUTPUT_DIR/subdomains.txt"
+
+    scope_filter_file "$OUTPUT_DIR/subdomains.txt" "$OUTPUT_DIR/authorized_subdomains.txt"
     
     SUBS=$(wc -l < "$OUTPUT_DIR/subdomains.txt")
     echo -e "${GREEN}  ✓ $SUBS subdomains found${NC}"
     
     echo -e "${YELLOW}[1.2] HTTP probing${NC}"
-    httpx -l "$OUTPUT_DIR/subdomains.txt" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null
+    httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null
     
     echo -e "${YELLOW}[1.3] Wayback URLs${NC}"
-    echo "$TARGET" | gau --threads 5 2>/dev/null | sort -u > "$OUTPUT_DIR/wayback.txt"
-    waybackurls "$TARGET" >> "$OUTPUT_DIR/wayback.txt" 2>/dev/null
-    sort -u "$OUTPUT_DIR/wayback.txt" -o "$OUTPUT_DIR/wayback.txt"
+    echo "$TARGET" | gau --threads 5 2>/dev/null | sort -u > "$OUTPUT_DIR/wayback_raw.txt"
+    waybackurls "$TARGET" >> "$OUTPUT_DIR/wayback_raw.txt" 2>/dev/null
+    sort -u "$OUTPUT_DIR/wayback_raw.txt" -o "$OUTPUT_DIR/wayback_raw.txt"
+    scope_filter_file "$OUTPUT_DIR/wayback_raw.txt" "$OUTPUT_DIR/wayback.txt"
     
     echo -e "${YELLOW}[1.4] JS endpoints${NC}"
-    katana -u "https://$TARGET" -d 3 -jc -o "$OUTPUT_DIR/js_endpoints.txt" -silent 2>/dev/null
+    katana -u "https://$TARGET" -d 3 -jc \
+        -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
+        -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null
+    scope_filter_file "$OUTPUT_DIR/js_endpoints_raw.txt" "$OUTPUT_DIR/js_endpoints.txt"
     
     echo -e "${YELLOW}[1.5] Parameter discovery${NC}"
     cat "$OUTPUT_DIR/wayback.txt" | grep "?" | unfurl keys | sort -u > "$OUTPUT_DIR/params.txt" 2>/dev/null
@@ -709,61 +697,63 @@ print_banner
 
 case "${1:-help}" in
     new)
-        new_program "$2"
+        new_program "${2:-}"
         ;;
     scope)
-        check_scope "$2"
+        check_scope "${2:-}"
         ;;
     resolve)
-        resolve_check "$2"
+        check_scope "${2:-}" || exit 1
+        resolve_check "$SCOPE_TARGET"
         ;;
     recon)
-        check_scope "$2" || exit 1
-        reconnaissance "$2"
+        check_scope "${2:-}" || exit 1
+        reconnaissance "$SCOPE_TARGET"
         ;;
     vuln)
-        check_scope "$2" || exit 1
-        vuln_scan "$2"
+        check_scope "${2:-}" || exit 1
+        vuln_scan "$SCOPE_TARGET"
         ;;
     brute)
-        check_scope "$2" || exit 1
-        advanced_bruteforce "$2"
+        check_scope "${2:-}" || exit 1
+        advanced_bruteforce "$SCOPE_TARGET"
         ;;
     secrets)
-        check_scope "$2" || exit 1
-        secrets_hunting "$2"
+        check_scope "${2:-}" || exit 1
+        secrets_hunting "$SCOPE_TARGET"
         ;;
     api)
-        check_scope "$2" || exit 1
-        api_testing "$2"
+        check_scope "${2:-}" || exit 1
+        api_testing "$SCOPE_TARGET"
         ;;
     report)
-        generate_report "$2"
+        check_scope "${2:-}" || exit 1
+        generate_report "$SCOPE_TARGET"
         ;;
     platforms)
         show_platforms
         ;;
     zeroday)
-        zeroday_research "$2"
+        zeroday_research "${2:-}"
         ;;
     encode|encoding|bypass)
-        encoding_bypass "$2"
+        encoding_bypass "${2:-}"
         ;;
     full)
-        TARGET="$2"
+        TARGET="${2:-}"
         if [ -z "$TARGET" ]; then
             echo -e "${RED}Usage: $0 full <domain>${NC}"
             exit 1
         fi
         check_scope "$TARGET" || exit 1
-        reconnaissance "$TARGET"
-        vuln_scan "$TARGET"
-        advanced_bruteforce "$TARGET"
-        secrets_hunting "$TARGET"
-        api_testing "$TARGET"
-        business_logic "$TARGET"
-        chain_attacks "$TARGET"
-        generate_report "$TARGET"
+        reconnaissance "$SCOPE_TARGET"
+        vuln_scan "$SCOPE_TARGET"
+        advanced_bruteforce "$SCOPE_TARGET"
+        secrets_hunting "$SCOPE_TARGET"
+        api_testing "$SCOPE_TARGET"
+        business_logic "$SCOPE_TARGET"
+        chain_attacks "$SCOPE_TARGET"
+        generate_report "$SCOPE_TARGET"
         ;;
     *)
         echo ""

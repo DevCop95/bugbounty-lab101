@@ -6,11 +6,13 @@
 # it runs automatic scans against targets
 # ============================================
 
-set -e
+set -euo pipefail
 
 # Configuration
 FEED_URL="https://raw.githubusercontent.com/DevCop95/cYHBernews/refs/heads/main/noticias.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 DATA_DIR="$SCRIPT_DIR/threat-intel"
 REPORT_DIR="$SCRIPT_DIR/reports"
 LOG_DIR="$SCRIPT_DIR/logs"
@@ -133,6 +135,11 @@ detect_new_threats() {
 scan_target() {
     local target="$1"
     local threat_info="$2"
+
+    if ! require_scope "$target"; then
+        log_error "Skipping unauthorized target: $target"
+        return 1
+    fi
     
     log "Scanning target: $target"
     
@@ -146,7 +153,8 @@ scan_target() {
     
     # Check for vulnerable services
     local vulns_found
-    vulns_found=$(grep -ci "vulnerability\|vuln\|cve\|exploit" "$scan_dir/quick-scan.txt" 2>/dev/null || echo "0")
+    vulns_found=$(grep -ci "vulnerability\|vuln\|cve\|exploit" "$scan_dir/quick-scan.txt" 2>/dev/null || true)
+    vulns_found=${vulns_found:-0}
     
     if [ "$vulns_found" -gt 0 ]; then
         log "Potential vulnerabilities found in $target"
@@ -156,15 +164,19 @@ scan_target() {
         local scan_pid=$!
         
         # Save threat info
-        cat > "$scan_dir/threat-info.json" << EOF
-{
-    "target": "$target",
-    "scan_date": "$(date -Iseconds)",
-    "threat_info": $threat_info,
-    "vulnerabilities_found": $vulns_found,
-    "scan_pid": $scan_pid
-}
-EOF
+        jq -n \
+            --arg target "$target" \
+            --arg scan_date "$(date -Iseconds)" \
+            --argjson threat_info "$threat_info" \
+            --argjson vulnerabilities_found "$vulns_found" \
+            --argjson scan_pid "$scan_pid" \
+            '{
+                target: $target,
+                scan_date: $scan_date,
+                threat_info: $threat_info,
+                vulnerabilities_found: $vulnerabilities_found,
+                scan_pid: $scan_pid
+            }' > "$scan_dir/threat-info.json"
         
         log_success "Full scan started (PID: $scan_pid)"
         return 0
@@ -252,6 +264,13 @@ EOF
 scan_for_specific_cve() {
     local cve="$1"
     local target="$2"
+    local host
+
+    if ! require_scope "$target"; then
+        log_error "Skipping unauthorized target: $target"
+        return 1
+    fi
+    host=$(normalize_target "$target") || return 1
     
     log "Scanning for $cve on $target"
     
@@ -280,7 +299,7 @@ $exploit_info
 EOF
     
     # Run nmap with specific scripts
-    nmap -sV --script "*$cve*" "$target" >> "$scan_result" 2>/dev/null || true
+    nmap -sV --script "*$cve*" "$host" >> "$scan_result" 2>/dev/null || true
     
     log_success "CVE scan completed: $scan_result"
 }

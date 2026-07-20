@@ -4,6 +4,12 @@
 # Real PHP, HTML, SVG upload tests
 # ============================================
 
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -11,14 +17,26 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-if [ $# -eq 0 ]; then
-    echo -e "${RED}Usage: $0 <url> [upload_endpoint]${NC}"
-    echo "Example: $0 https://sistemataller.com /prueba-gratis"
+if [ $# -lt 3 ]; then
+    echo -e "${RED}Usage: $0 <url> <upload_endpoint> <cleanup_url_template>${NC}"
+    echo "Example: $0 https://example.com /upload 'https://example.com/files/{filename}'"
     exit 1
 fi
 
 TARGET_URL="$1"
 UPLOAD_ENDPOINT="${2:-/}"
+CLEANUP_URL_TEMPLATE="$3"
+require_scope "$TARGET_URL" || exit 1
+normalize_target "$TARGET_URL" >/dev/null || exit 1
+if [[ "$UPLOAD_ENDPOINT" != /* ]] || [[ "$UPLOAD_ENDPOINT" == *$'\n'* ]]; then
+    echo -e "${RED}[!] Upload endpoint must be an absolute URL path${NC}"
+    exit 1
+fi
+if [[ "$CLEANUP_URL_TEMPLATE" != *'{filename}'* ]]; then
+    echo -e "${RED}[!] Cleanup URL must contain the {filename} placeholder${NC}"
+    exit 1
+fi
+require_scope "${CLEANUP_URL_TEMPLATE//\{filename\}/scope-check}" || exit 1
 FULL_URL="${TARGET_URL}${UPLOAD_ENDPOINT}"
 
 echo -e "${CYAN}"
@@ -30,8 +48,73 @@ echo -e "${BLUE}Target:${NC} $TARGET_URL"
 echo -e "${BLUE}Endpoint:${NC} $UPLOAD_ENDPOINT"
 echo ""
 
-TMPDIR=$(mktemp -d)
+safe_tmpdir TMPDIR "file_upload_scanner"
 VULNS_FOUND=0
+SCAN_ID="bblab-$(date +%Y%m%d%H%M%S)-$$"
+ATTEMPT=0
+declare -A REMOTE_PENDING=()
+
+cleanup_remote() {
+    local filename="$1"
+    local encoded_filename cleanup_url status
+    encoded_filename=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$filename")
+    cleanup_url="${CLEANUP_URL_TEMPLATE//\{filename\}/$encoded_filename}"
+    status=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$cleanup_url" 2>/dev/null)
+    if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+        echo -e "${RED}[!] Remote cleanup failed for $filename (HTTP $status)${NC}"
+        return 1
+    fi
+    unset 'REMOTE_PENDING[$filename]'
+    echo -e "${GREEN}    Removed remote test artifact: $filename${NC}"
+}
+
+cleanup_all() {
+    local exit_status=$?
+    local cleanup_failed=0
+    local filename
+    set +eu
+    for filename in "${!REMOTE_PENDING[@]}"; do
+        cleanup_remote "$filename" || cleanup_failed=1
+    done
+    if [ "${#REMOTE_PENDING[@]}" -gt 0 ]; then
+        echo -e "${RED}[!] Remote test artifacts still require manual cleanup:${NC}" >&2
+        printf '  %s\n' "${!REMOTE_PENDING[@]}" >&2
+        cleanup_failed=1
+    fi
+    cleanup_tmpdir "$TMPDIR"
+    if [ "$exit_status" -ne 0 ]; then
+        exit "$exit_status"
+    fi
+    if [ "$cleanup_failed" -ne 0 ]; then
+        exit 1
+    fi
+}
+
+test_upload() {
+    local file="$1"
+    local payload="$2"
+    local content_type="$3"
+    local remote_name response
+
+    ATTEMPT=$((ATTEMPT + 1))
+    remote_name="$SCAN_ID-$ATTEMPT-$payload"
+    REMOTE_PENDING["$remote_name"]=1
+    response=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "$FULL_URL" \
+        -F "file=@$file;filename=$remote_name;type=$content_type" \
+        2>/dev/null) || response="000"
+
+    if [[ "$response" =~ ^[23][0-9][0-9]$ ]]; then
+        echo -e "${RED}    ACCEPTED with Content-Type: $content_type (HTTP $response)${NC}"
+        VULNS_FOUND=$((VULNS_FOUND + 1))
+        cleanup_remote "$remote_name"
+    else
+        # A server can store a file despite returning an error status.
+        cleanup_remote "$remote_name" >/dev/null 2>&1 || true
+    fi
+}
+
+trap cleanup_all EXIT
 
 # ============================================
 # PHASE 1: CREATE PAYLOADS
@@ -122,27 +205,23 @@ echo -e "${YELLOW}[2/6] Detecting upload endpoint...${NC}"
 echo ""
 
 # Search for forms with file input
-UPLOAD_FOUND=0
 curl -s "$TARGET_URL" | grep -oP '<form[^>]*>' | while read -r form; do
     if echo "$form" | grep -qi "file\|upload\|logo\|image"; then
         echo -e "${GREEN}  ✓ Form found: $form${NC}"
-        UPLOAD_FOUND=1
     fi
-done
+done || true
 
 # Search for file input
 curl -s "$TARGET_URL" | grep -oP '<input[^>]*type=["\x27]file["\x27][^>]*>' | while read -r input; do
     echo -e "${GREEN}  ✓ File input: $input${NC}"
-    # shellcheck disable=SC2034
-    UPLOAD_FOUND=1
-done
+done || true
 
 # Search for accept
 echo ""
 echo -e "${CYAN}Accepted types:${NC}"
 curl -s "$TARGET_URL" | grep -oP 'accept=["\x27][^"]*["\x27]' | while read -r line; do
     echo "  $line"
-done
+done || true
 
 # ============================================
 # PHASE 3: TEST PHP UPLOADS
@@ -169,18 +248,9 @@ for payload in "${PHP_PAYLOADS[@]}"; do
     FILE="$TMPDIR/$payload"
     if [ -f "$FILE" ]; then
         echo -e "${CYAN}  Testing: $payload${NC}"
-        
         # Try upload with different Content-Types
         for ct in "application/x-php" "image/jpeg" "image/png" "application/octet-stream"; do
-            RESP=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST "$FULL_URL" \
-                -F "file=@$FILE;filename=$payload;type=$ct" \
-                2>/dev/null)
-            
-            if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
-                echo -e "${RED}    ⚠️ ACCEPTED with Content-Type: $ct (HTTP $RESP)${NC}"
-                VULNS_FOUND=$((VULNS_FOUND + 1))
-            fi
+            test_upload "$FILE" "$payload" "$ct"
         done
     fi
 done
@@ -205,17 +275,8 @@ for payload in "${HTML_PAYLOADS[@]}"; do
     FILE="$TMPDIR/$payload"
     if [ -f "$FILE" ]; then
         echo -e "${CYAN}  Testing: $payload${NC}"
-        
         for ct in "text/html" "image/svg+xml" "application/octet-stream"; do
-            RESP=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST "$FULL_URL" \
-                -F "file=@$FILE;filename=$payload;type=$ct" \
-                2>/dev/null)
-            
-            if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
-                echo -e "${RED}    ⚠️ ACCEPTED with Content-Type: $ct (HTTP $RESP)${NC}"
-                VULNS_FOUND=$((VULNS_FOUND + 1))
-            fi
+            test_upload "$FILE" "$payload" "$ct"
         done
     fi
 done
@@ -240,17 +301,8 @@ for payload in "${SVG_PAYLOADS[@]}"; do
     FILE="$TMPDIR/$payload"
     if [ -f "$FILE" ]; then
         echo -e "${CYAN}  Testing: $payload${NC}"
-        
         for ct in "image/svg+xml" "text/html" "application/octet-stream"; do
-            RESP=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST "$FULL_URL" \
-                -F "file=@$FILE;filename=$payload;type=$ct" \
-                2>/dev/null)
-            
-            if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
-                echo -e "${RED}    ⚠️ ACCEPTED with Content-Type: $ct (HTTP $RESP)${NC}"
-                VULNS_FOUND=$((VULNS_FOUND + 1))
-            fi
+            test_upload "$FILE" "$payload" "$ct"
         done
     fi
 done
@@ -300,7 +352,7 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  TEST SUMMARY${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  Payloads tested: ${CYAN}$(ls $TMPDIR | wc -l)${NC}"
+echo -e "  Payloads tested: ${CYAN}$(ls "$TMPDIR" | wc -l)${NC}"
 echo -e "  Uploads accepted: ${RED}$VULNS_FOUND${NC}"
 echo ""
 
@@ -315,9 +367,6 @@ if [ $VULNS_FOUND -gt 0 ]; then
 else
     echo -e "${GREEN}  ✓ No vulnerable uploads found${NC}"
 fi
-
-# Clean up
-rm -rf "$TMPDIR"
 
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"

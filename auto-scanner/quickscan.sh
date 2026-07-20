@@ -7,7 +7,11 @@
 # Quick scan for when you need fast results
 # ============================================
 
-set -eo pipefail
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Colors
 RED='\033[0;31m'
@@ -24,7 +28,8 @@ if [ $# -eq 0 ]; then
 fi
 
 TARGET_URL="$1"
-DOMAIN=$(echo "$TARGET_URL" | sed -E 's|^https?://||' | sed 's|/.*||')
+require_scope "$TARGET_URL" || exit 1
+DOMAIN=$(normalize_target "$TARGET_URL") || exit 1
 TARGET_IP=$(dig +short "$DOMAIN" | head -1)
 
 echo -e "${CYAN}"

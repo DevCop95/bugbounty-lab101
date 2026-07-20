@@ -24,8 +24,9 @@ Thanks for your interest in contributing! This guide covers the basics.
 - Use `mktemp` for temporary files — never predictable `/tmp/name_$$` patterns
 - Add a cleanup `trap` for any temp resources:
   ```bash
-  TEMP_DIR=$(mktemp -d /tmp/myscript.XXXXXX)
-  trap 'rm -rf "$TEMP_DIR"' EXIT
+  source "$SCRIPT_DIR/lib/common.sh"
+  safe_tmpdir TEMP_DIR "myscript"
+  trap 'cleanup_tmpdir "$TEMP_DIR"' EXIT
   ```
 - Resolve script directory with:
   ```bash

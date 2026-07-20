@@ -1,6 +1,6 @@
 # ── Pentesting Lab — generated artifacts ────────────────────────────
-# Goal: don't commit noisy scan output. Real evidence
-# (reports .md, FINDING_*.md files) IS versioned.
+# Goal: never commit raw scan output or sensitive evidence.
+# Publish only manually redacted material outside these directories.
 
 # T3MP3ST integration (separate repo, updated via git pull in t3mp3st/)
 t3mp3st/
@@ -9,6 +9,13 @@ t3mp3st/
 *.log
 auto-scanner/logs/
 **/daemon-*.log
+
+# Raw reports and evidence may contain credentials or embargoed findings
+bugbounty/reports/
+auto-scanner/reports/
+reports/
+evidence/
+**/js_secrets.txt
 
 # Local databases and caches
 auto-scanner/db/
@@ -20,6 +27,8 @@ auto-scanner/db/
 
 # Temporary files
 *.tmp
+*.pyc
+__pycache__/
 *.swp
 *~
 .DS_Store
@@ -29,14 +38,5 @@ Thumbs.db
 legacy-vm-practice/vms/
 legacy-vm-practice/network/
 
-# ── OPTIONAL: raw recon dumps (uncomment to ignore them) ───────────
-# These are regenerable recon output. Left versioned by default
-# because they often serve as evidence for a finding. Uncomment if
-# you prefer keeping the repo lightweight and regenerating them
-# with bugbounty-hunter.sh.
-#
-# bugbounty/reports/*/recon/*.json
-# bugbounty/reports/*/recon/wayback_raw.json
-# bugbounty/reports/*/recon/*_urls.txt
-# auto-scanner/threat-intel/
-# auto-scanner/reports/threat-intel-*.md
+# Threat intelligence cache is generated locally
+auto-scanner/threat-intel/

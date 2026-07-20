@@ -29,13 +29,25 @@ import sys
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 import argparse
+from pathlib import Path
 from typing import Optional, Dict, Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from scope_guard import ScopeError, authorize  # noqa: E402
 
 # Configuración por defecto
 BURP_HOST = "localhost"
 BURP_PORT = 1337
 BURP_API_KEY = ""  # Configurar si es necesario
+PROGRAMS_DIR = REPO_ROOT / "programs"
+
+
+def require_authorized(url: str) -> str:
+    host, _ = authorize(url, PROGRAMS_DIR)
+    return host
 
 class BurpAPI:
     def __init__(self, host: str = BURP_HOST, port: int = BURP_PORT, api_key: str = ""):
@@ -108,11 +120,13 @@ class BurpAPI:
     
     def add_to_target(self, url: str) -> Dict:
         """Agregar URL al target scope"""
+        host = require_authorized(url)
+        parsed = urllib.parse.urlsplit(url if "://" in url else f"https://{url}")
         return self.post("/burp/api/target/scope", {
             "include": True,
-            "protocol": "https",
-            "host": url,
-            "port": -1,
+            "protocol": parsed.scheme,
+            "host": host,
+            "port": parsed.port or -1,
             "file": ".*"
         })
     
@@ -122,6 +136,7 @@ class BurpAPI:
     
     def start_spider(self, url: str) -> Dict:
         """Iniciar spider"""
+        require_authorized(url)
         return self.post("/burp/api/spider", {
             "url": url,
             "maxDepth": 0,
@@ -139,6 +154,8 @@ class BurpAPI:
     
     def start_scan(self, urls: list) -> Dict:
         """Iniciar escaneo activo"""
+        for url in urls:
+            require_authorized(url)
         return self.post("/burp/api/scans", {
             "scanConfiguration": ["active"],
             "targets": [{"url": url, "type": "baseUrl"} for url in urls]
@@ -168,6 +185,7 @@ class BurpAPI:
     
     def send_to_repeater(self, request: Dict) -> Dict:
         """Enviar petición a Repeater"""
+        require_authorized(str(request.get("url", "")))
         return self.post("/burp/api/repeater", request)
     
     def get_repeater_tabs(self) -> Dict:
@@ -176,6 +194,7 @@ class BurpAPI:
     
     def send_to_intruder(self, request: Dict) -> Dict:
         """Enviar petición a Intruder"""
+        require_authorized(str(request.get("url", "")))
         return self.post("/burp/api/intruder", request)
 
 def main():
@@ -285,8 +304,12 @@ def main():
         
         print(json.dumps(result, indent=2))
         
+    except ScopeError as e:
+        print(f"\nScope denied: {e}", file=sys.stderr)
+        raise SystemExit(1)
     except Exception as e:
-        print(f"\n{RED}Error: {e}{NC}")
+        print(f"\nError: {e}", file=sys.stderr)
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()

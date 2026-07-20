@@ -12,8 +12,9 @@
 ## In Scope
 
 - main-domain.com
-- api.main-domain.com
+- *.api.main-domain.com
 - app.main-domain.com
+- 192.0.2.0/24
 
 ## Out of Scope
 

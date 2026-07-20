@@ -33,6 +33,12 @@ Each file follows the template in [`_template.md`](_template.md).
 
 ## Golden rule
 
-If a target doesn't appear in any file in `programs/`, the scanner blocks it
-by default. Using `FORCE=1` to skip the check is a signal that the scope needs
-updating — not a normal workflow.
+If a target doesn't appear in any file in `programs/`, every active scanner
+blocks it. There is no `FORCE` bypass: document the authorization before
+running a scan. Exact hosts, `*.example.com` wildcards, and CIDR ranges are
+supported; an entry in any `Out of Scope` section always wins.
+
+Raw output under `bugbounty/reports/`, `auto-scanner/reports/`, `reports/`, and
+`evidence/` is intentionally ignored by Git because it may contain credentials
+or embargoed findings. Publish only a manually redacted copy outside those
+directories.

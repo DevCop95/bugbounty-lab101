@@ -377,7 +377,7 @@ bugbounty-lab/
 
 ## Important Rules
 
-1. **Never scan an asset that is not documented as In Scope in `programs/<program>.md`.** `bugbounty-hunter.sh` blocks it by default — `FORCE=1` is a signal that scope is missing, not a normal shortcut.
+1. **Never scan an asset that is not documented as In Scope in `programs/<program>.md`.** All active scanners block it, and there is no `FORCE` bypass.
 2. **Respect each program's exclusions and special rules** (rate limits, excluded vuln types, test accounts).
 3. **Check for duplicates in Hacktivity before reporting.**
 4. **Do not run destructive actions** against real targets — see the checklist in `bugbounty/templates/report-template.md`.

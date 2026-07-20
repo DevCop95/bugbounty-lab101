@@ -1,5 +1,8 @@
 #!/bin/bash
 # ============================================
+
+# Generated reports and temporary evidence are private by default.
+umask 077
 # common.sh — Shared library for auto-scanner
 # ============================================
 # Source this file from any script:
@@ -29,6 +32,41 @@ log_error()   { echo -e "${RED}[✗]${NC} $1"; }
 log_action()  { echo -e "${BLUE}[→]${NC} $1"; }
 log_tool()    { echo -e "${WHITE}[⚙]${NC} Using: $1"; }
 
+# ── Repository paths and scope authorization ───────────────────────
+COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$COMMON_LIB_DIR/../.." && pwd)"
+readonly COMMON_LIB_DIR REPO_ROOT
+readonly PROGRAMS_DIR="$REPO_ROOT/programs"
+readonly SCOPE_GUARD="$REPO_ROOT/scripts/scope_guard.py"
+
+normalize_target() {
+    python3 "$SCOPE_GUARD" --normalize "$1"
+}
+
+require_scope() {
+    local result
+    local programs_dir="${2:-$PROGRAMS_DIR}"
+    if ! result=$(python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$1"); then
+        log_error "Target authorization failed"
+        return 1
+    fi
+    log_info "Scope authorized: ${result%%$'\t'*} (${result#*$'\t'})"
+}
+
+scope_filter_file() {
+    local input_file="$1"
+    local output_file="$2"
+    local programs_dir="${3:-$PROGRAMS_DIR}"
+    local candidate
+    : > "$output_file"
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        if python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$candidate" >/dev/null 2>&1; then
+            printf '%s\n' "$candidate" >> "$output_file"
+        fi
+    done < "$input_file"
+}
+
 # ── Domain parsing ──────────────────────────────────────────────────
 # Usage: DOMAIN=$(parse_domain "https://example.com/path")
 parse_domain() {
@@ -47,16 +85,18 @@ check_tool() {
 }
 
 # ── Safe temporary directory ────────────────────────────────────────
-# Usage: TEMP_DIR=$(safe_tmpdir "autopentest")
-# Automatically registers a cleanup trap on EXIT.
+# Usage: safe_tmpdir TEMP_DIR "autopentest"
+# The caller owns the EXIT trap so it is registered in the current shell.
 safe_tmpdir() {
-    local prefix="${1:-bblab}"
+    local variable_name="$1"
+    local prefix="${2:-bblab}"
     local tmpdir
     tmpdir=$(mktemp -d "/tmp/${prefix}.XXXXXX")
-    # Register cleanup — appends to any existing EXIT trap
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" EXIT
-    echo "$tmpdir"
+    printf -v "$variable_name" '%s' "$tmpdir"
+}
+
+cleanup_tmpdir() {
+    [ -z "${1:-}" ] || rm -rf -- "$1"
 }
 
 # ── Script directory resolution ─────────────────────────────────────

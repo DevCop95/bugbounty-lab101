@@ -76,6 +76,8 @@ A workspace built around the **real bug bounty workflow on HackerOne**: choose a
 ```bash
 cd bugbounty-lab101
 chmod +x bugbounty/*.sh auto-scanner/*.sh
+# If the repository was cloned without submodules:
+git submodule update --init --recursive
 ```
 
 ### 2. Document program scope
@@ -147,7 +149,7 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 | `bugbounty-hunter.sh new <prog>` | Create scope tracker for a program | `./bugbounty-hunter.sh new acme-corp` |
 | `bugbounty-hunter.sh scope <target>` | Verify target is in scope | `./bugbounty-hunter.sh scope target.com` |
 | `bugbounty-hunter.sh full <target>` | Full pipeline (recon to report) | `./bugbounty-hunter.sh full target.com` |
-| `bugbounty-hunter.sh recon <target>` | Recon only | `./bugbounty-hunter.sh recon target.com` |
+| `bugbounty-hunter.sh recon <target>` | Recon only, including passive Shodan CTL enrichment | `./bugbounty-hunter.sh recon target.com` |
 | `bugbounty-hunter.sh report <target>` | Generate report with H1 template | `./bugbounty-hunter.sh report target.com` |
 | `pentest.sh <url>` | Generic arsenal (400+ tools) | `pentest.sh https://target.com` |
 | `pentest.sh matrix` | Full tool matrix | `pentest.sh matrix` |
@@ -159,7 +161,7 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 
 </div>
 
-All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target.
+All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target. The passive Shodan CTL integration is optional and uses the pinned `vendor/shodan_reconsx` submodule when `recons101x` is not installed. Its hostnames are scope-filtered before any HTTP probing.
 
 ---
 

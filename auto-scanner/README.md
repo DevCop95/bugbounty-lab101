@@ -21,6 +21,8 @@ auto-scanner/
 ├── threat-monitor-daemon.sh # Lightweight threat monitor
 ├── lib/
 │   └── common.sh           # Shared library (colors, utils, version)
+├── integrations/
+│   └── shodan_reconsx.sh   # Passive Shodan CTL recon adapter
 ├── tools/
 │   └── registry.sh         # Tool database (400+ tools)
 ├── burp-integration/
@@ -41,6 +43,11 @@ auto-scanner/
 # or explicitly:
 ./pentest.sh pro https://your-site.com
 ```
+
+The scope-enforced `bugbounty/bugbounty-hunter.sh recon` workflow also runs the
+optional passive `shodan_reconsx` enrichment. It uses the pinned submodule at
+`vendor/shodan_reconsx`, or an installed `recons101x` command, and filters every
+hostname through the scope guard before HTTP probing.
 
 ### Express Scan
 ```bash
@@ -148,8 +155,8 @@ auto-scanner/
 
 ## Tools by Category
 
-### Reconnaissance (12 tools)
-nmap, dnsrecon, theHarvester, amass, recon-ng, whois, dig, host, curl, wget, dnsenum, fierce
+### Reconnaissance (13 tools)
+nmap, dnsrecon, theHarvester, recons101x, amass, recon-ng, whois, dig, host, curl, wget, dnsenum, fierce
 
 ### Web (14 tools)
 nikto, whatweb, gobuster, dirb, wfuzz, ffuf, sqlmap, xsser, wpscan, joomscan, cariddi, dirbuster, commix, xsstrike

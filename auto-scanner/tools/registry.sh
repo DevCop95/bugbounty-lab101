@@ -42,6 +42,7 @@ TOOLS_RECON[whoisxmlapi]="recon|whois|api|domain_intel|3-6|https://www.whoisxmla
 
 # --- OSINT & Recon Frameworks ---
 TOOLS_RECON[theHarvester]="recon|osint|email_harvest|subdomain_find|4-8|https://github.com/laramies/theHarvester"
+TOOLS_RECON[recons101x]="recon|osint|subdomain_enum|shodan_ctl|passive|4-7|https://github.com/DevCop95/shodan_reconsx"
 TOOLS_RECON[recon-ng]="recon|osint|modular|web_recon|5-9|https://github.com/lanmaster53/recon-ng"
 TOOLS_RECON[amass]="recon|osint|subdomain_enum|attack_surface|6-10|https://github.com/owasp-amass/amass"
 TOOLS_RECON[spiderfoot]="recon|osint|automated|multi_source|7-10|https://github.com/smicallef/spiderfoot"

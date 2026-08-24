@@ -11,7 +11,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BB_VERSION="1.1"
+BB_VERSION="1.0.5"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUGBOUNTY_DIR="$SCRIPT_DIR"
@@ -188,13 +188,31 @@ reconnaissance() {
     echo -e "${CYAN}[1/8] DEEP RECONNAISSANCE - $TARGET${NC}"
     
     echo -e "${YELLOW}[1.1] Subdomain Enumeration${NC}"
-    subfinder -d "$TARGET" -o "$OUTPUT_DIR/subdomains.txt" 2>/dev/null
-    amass enum -passive -d "$TARGET" >> "$OUTPUT_DIR/subdomains.txt" 2>/dev/null
-    sort -u "$OUTPUT_DIR/subdomains.txt" -o "$OUTPUT_DIR/subdomains.txt"
+    local RAW_SUBDOMAINS="$OUTPUT_DIR/subdomains_raw.txt"
+    : > "$RAW_SUBDOMAINS"
 
-    scope_filter_file "$OUTPUT_DIR/subdomains.txt" "$OUTPUT_DIR/authorized_subdomains.txt"
-    
-    SUBS=$(wc -l < "$OUTPUT_DIR/subdomains.txt")
+    if check_tool subfinder; then
+        subfinder -d "$TARGET" -o "$RAW_SUBDOMAINS" 2>/dev/null
+    else
+        echo -e "${YELLOW}  [!] subfinder is not installed; continuing${NC}"
+    fi
+    if check_tool amass; then
+        amass enum -passive -d "$TARGET" >> "$RAW_SUBDOMAINS" 2>/dev/null
+    else
+        echo -e "${YELLOW}  [!] amass is not installed; continuing${NC}"
+    fi
+
+    if [ -x "$BUGBOUNTY_DIR/../auto-scanner/integrations/shodan_reconsx.sh" ]; then
+        "$BUGBOUNTY_DIR/../auto-scanner/integrations/shodan_reconsx.sh" \
+            "$TARGET" "$OUTPUT_DIR"
+        cat "$OUTPUT_DIR/shodan_subdomains.txt" >> "$RAW_SUBDOMAINS"
+    fi
+
+    sort -u "$RAW_SUBDOMAINS" -o "$RAW_SUBDOMAINS"
+    scope_filter_file "$RAW_SUBDOMAINS" "$OUTPUT_DIR/subdomains.txt"
+    cp "$OUTPUT_DIR/subdomains.txt" "$OUTPUT_DIR/authorized_subdomains.txt"
+
+    SUBS=$(wc -l < "$OUTPUT_DIR/authorized_subdomains.txt")
     echo -e "${GREEN}  ✓ $SUBS subdomains found${NC}"
     
     echo -e "${YELLOW}[1.2] HTTP probing${NC}"

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5] - 2026-08-24
+
+### Added
+- Passive `shodan_reconsx` integration in the scope-enforced reconnaissance pipeline.
+- `vendor/shodan_reconsx` pinned as a Git submodule at the upstream `main` commit used by this release.
+- Automatic extraction and scope filtering of Shodan CTL hostnames before HTTP probing.
+
+### Improved
+- Recon now reports only authorized subdomains in `subdomains.txt` and counts the filtered set.
+- Missing `subfinder` and `amass` installations are reported without aborting the remaining recon stages.
+- Stale subdomain candidates are cleared at the start of each recon run.
+
 ## [1.1] - 2026-07-09
 
 ### Added

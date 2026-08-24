@@ -1,0 +1,3 @@
+[submodule "vendor/shodan_reconsx"]
+	path = vendor/shodan_reconsx
+	url = https://github.com/DevCop95/shodan_reconsx.git

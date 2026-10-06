@@ -30,7 +30,7 @@ fi
 TARGET_URL="$1"
 require_scope "$TARGET_URL" || exit 1
 DOMAIN=$(normalize_target "$TARGET_URL") || exit 1
-TARGET_IP=$(dig +short "$DOMAIN" | head -1)
+TARGET_IP=$(resolve_ip "$DOMAIN")
 # Do not port-scan a CDN/shared edge IP — it is a third party and out of scope.
 if resolves_behind_cdn "$DOMAIN" "$TARGET_IP"; then TARGET_IP=""; fi
 

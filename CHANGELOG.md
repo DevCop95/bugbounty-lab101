@@ -2,6 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-10-06
+
+### Added
+- **AI / LLM security reference** (`docs/ai-llm-security.md`) — prompt injection
+  (direct + indirect), system-prompt extraction, insecure output handling,
+  tool/function-call abuse, LLM data exfiltration, and malicious model-file RCE,
+  mapped to the OWASP LLM Top 10. Closes the biggest 2026 coverage gap.
+- **Vulnerability-class deep-dives** in `bugbounty/QUICK-REFERENCE.md`: account
+  takeover via password reset, broken access control/IDOR depth, mass assignment,
+  race conditions, JWT/OAuth flaws, GraphQL abuse, prototype pollution, web cache
+  poisoning/deception, CORS misconfiguration, subdomain takeover, CSV injection,
+  path traversal with encoding bypass (CWE-22), NoSQL/Elasticsearch Painless
+  script injection (CWE-943/94), and cloud secrets/identity in JS bundles
+  (CWE-200/798, incl. AWS Cognito IdentityPoolId abuse).
+- **`scripts/duplicate_check.py`** — pre-submission self-duplicate check
+  (fuzzy-matches a new finding against your `programs/*.md` "Submitted Reports"
+  tables) plus a structured Hacktivity search template. Stdlib only.
+- **`auto-scanner/kev-correlate.sh`** — correlates the live CISA KEV catalog
+  against a target's detected stack (from `httpx -td`), with optional webhook
+  alerting and documented EPSS/NVD/OSV extension points.
+- **Recon depth** in `bugbounty-hunter.sh`: crt.sh + certspotter (two Certificate Transparency sources) for subdomains,
+  enriched `httpx` output (`-td -title -server -cname -asn -json`), JS
+  endpoint/secret analysis (`jsluice`/`secretfinder`, source-map candidates),
+  API-spec discovery (swagger/openapi/graphql), and optional `paramspider`/`arjun`
+  param mining — all guarded, skipped gracefully when a tool is absent.
+- **`--passive-only` flag** (and `BB_PASSIVE_ONLY=1`) that skips every stage that
+  touches the target directly (httpx/katana/param-mining).
+- CVE watchlist now has a **Source column** (NVD link per row) and adds
+  high-volume perimeter/DevOps families: GitLab ATO (CVE-2023-7028), CitrixBleed
+  (CVE-2023-4966), Ivanti (CVE-2023-46805 + CVE-2024-21887), FortiOS
+  (CVE-2024-21762), Jenkins (CVE-2024-23897).
+
+### Changed
+- **`report-template.md`**: per-metric CVSS justification, a narrative "Attack
+  Scenario" section, explicit "Privileges required" and "Affected users/assets"
+  fields, a PoC video/GIF slot, and expanded pre-submission checklist.
+- **`scope_filter_file`** (`lib/common.sh`) now logs discarded candidates to
+  `*.discarded.txt` and collects unlisted-but-seen hosts in
+  `candidates-pending-scope.txt` for manual scope review instead of dropping them
+  silently.
+- `BB_VERSION` bumped to `1.1.0`.
+
+### Fixed
+- **Portable IP resolution** (`resolve_ip` in `lib/common.sh`, dig → host → getent
+  → python3): `quickscan.sh`, `pentest-express.sh`, `autopentest.sh` and
+  `autopentest-pro.sh` no longer hard-fail with `dig: command not found` on boxes
+  without `dnsutils`. This also unblocks the CDN guard (it needs a resolved IP).
+- `scope_filter_file` no longer errors with "No such file or directory" when an
+  upstream tool (e.g. katana) is absent and produces no input file.
+- crt.sh integration validates the body is JSON and retries (crt.sh frequently
+  returns 502), parsing with `jq` when available; recon now also probes the
+  target host itself even when no subdomains are discovered.
+- HTTP-probing stage detects when the installed `httpx` is the Python HTTP-client
+  CLI rather than ProjectDiscovery's `httpx`, and skips with a clear message
+  instead of failing silently.
+- `pentest-express.sh` reflected-XSS check: `grep -c ... || echo 0` produced
+  `"0\n0"` and broke the numeric test; corrected.
+
 ## [1.0.7] - 2026-10-06
 
 ### Fixed

@@ -13,7 +13,7 @@ umask 077
 
 # Version
 # shellcheck disable=SC2034
-BB_VERSION="1.0.7"
+BB_VERSION="1.1.0"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -58,13 +58,53 @@ scope_filter_file() {
     local output_file="$2"
     local programs_dir="${3:-$PROGRAMS_DIR}"
     local candidate
+    # Evidence trail: everything dropped goes here, and unlisted-but-live
+    # candidates go to candidates-pending-scope.txt for manual review instead of
+    # vanishing silently.
+    local discard_log="${output_file%.*}.discarded.txt"
+    local candidates_file
+    candidates_file="$(dirname "$output_file")/candidates-pending-scope.txt"
     : > "$output_file"
+    : > "$discard_log"
+    # Input may be absent when an upstream tool (e.g. katana) is not installed —
+    # produce an empty output instead of erroring.
+    [ -f "$input_file" ] || return 0
     while IFS= read -r candidate; do
         [ -n "$candidate" ] || continue
         if python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$candidate" >/dev/null 2>&1; then
             printf '%s\n' "$candidate" >> "$output_file"
+        else
+            printf '%s\n' "$candidate" >> "$discard_log"
+            printf '%s\n' "$candidate" >> "$candidates_file"
         fi
     done < "$input_file"
+    if [ -s "$candidates_file" ]; then
+        sort -u "$candidates_file" -o "$candidates_file"
+    fi
+}
+
+# ── Portable IP resolution ──────────────────────────────────────────
+# Not every box ships `dig` (dnsutils). Resolve the first A record using
+# whatever is available: dig -> host -> getent -> python3. Prints the IP or
+# nothing. Usage: ip=$(resolve_ip "$DOMAIN")
+resolve_ip() {
+    local host="$1" ip=""
+    [ -n "$host" ] || return 0
+    if command -v dig >/dev/null 2>&1; then
+        ip=$(dig +short A "$host" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
+    fi
+    if [ -z "$ip" ] && command -v host >/dev/null 2>&1; then
+        ip=$(host -t A "$host" 2>/dev/null | awk '/has address/{print $NF; exit}')
+    fi
+    if [ -z "$ip" ] && command -v getent >/dev/null 2>&1; then
+        ip=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}')
+    fi
+    if [ -z "$ip" ] && command -v python3 >/dev/null 2>&1; then
+        ip=$(python3 -c "import socket,sys
+try: print(socket.gethostbyname(sys.argv[1]))
+except Exception: pass" "$host" 2>/dev/null)
+    fi
+    printf '%s' "$ip"
 }
 
 # ── CDN / shared-edge safety guard ──────────────────────────────────

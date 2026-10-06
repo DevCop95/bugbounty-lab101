@@ -11,7 +11,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BB_VERSION="1.0.7"
+BB_VERSION="1.1.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUGBOUNTY_DIR="$SCRIPT_DIR"
@@ -191,6 +191,10 @@ reconnaissance() {
     local RAW_SUBDOMAINS="$OUTPUT_DIR/subdomains_raw.txt"
     : > "$RAW_SUBDOMAINS"
 
+    # Always probe the target host itself, even if no subdomains are discovered
+    # (e.g. crt.sh down + no subfinder/amass). It is in scope by definition.
+    printf '%s\n' "$TARGET" >> "$RAW_SUBDOMAINS"
+
     if check_tool subfinder; then
         subfinder -d "$TARGET" -o "$RAW_SUBDOMAINS" 2>/dev/null
     else
@@ -200,6 +204,58 @@ reconnaissance() {
         amass enum -passive -d "$TARGET" >> "$RAW_SUBDOMAINS" 2>/dev/null
     else
         echo -e "${YELLOW}  [!] amass is not installed; continuing${NC}"
+    fi
+
+    # crt.sh — Certificate Transparency, passive, no API key required.
+    # crt.sh is frequently flaky (502): validate the body is JSON and retry a
+    # couple of times; parse with jq when available, else a safe grep fallback.
+    if check_tool curl; then
+        local crt_raw=""
+        for _ in 1 2 3; do
+            crt_raw=$(curl -s -m 30 "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null)
+            case "$crt_raw" in
+                "["*) break ;;              # looks like a JSON array → good
+                *) crt_raw=""; sleep 3 ;;   # 502/HTML/empty → retry
+            esac
+        done
+        if [ -n "$crt_raw" ]; then
+            if check_tool jq; then
+                printf '%s' "$crt_raw" \
+                    | jq -r '.[].name_value' 2>/dev/null \
+                    | sed 's/^\*\.//' | grep -iE "\.?${TARGET_REGEX}$" \
+                    | sort -u >> "$RAW_SUBDOMAINS" || true
+            else
+                printf '%s' "$crt_raw" \
+                    | grep -oE '"name_value":"[^"]+"' | cut -d'"' -f4 \
+                    | sed 's/\\n/\n/g' | sed 's/^\*\.//' \
+                    | grep -iE "\.?${TARGET_REGEX}$" | sort -u >> "$RAW_SUBDOMAINS" || true
+            fi
+        else
+            echo -e "${YELLOW}  [!] crt.sh unavailable (502/timeout); skipping CT source${NC}"
+        fi
+
+        # certspotter — second Certificate Transparency source, far more stable
+        # than crt.sh, no API key needed for basic use. Covers crt.sh's gaps when
+        # it 502s.
+        local cs_raw
+        cs_raw=$(curl -s -m 30 "https://api.certspotter.com/v1/issuances?domain=${TARGET}&include_subdomains=true&expand=dns_names" 2>/dev/null)
+        case "$cs_raw" in
+            "["*)
+                if check_tool jq; then
+                    printf '%s' "$cs_raw" \
+                        | jq -r '.[].dns_names[]?' 2>/dev/null \
+                        | sed 's/^\*\.//' | grep -iE "\.?${TARGET_REGEX}$" \
+                        | sort -u >> "$RAW_SUBDOMAINS" || true
+                else
+                    printf '%s' "$cs_raw" \
+                        | grep -oE '"[a-zA-Z0-9.*_-]+\.'"${TARGET_REGEX}"'"' | tr -d '"' \
+                        | sed 's/^\*\.//' | sort -u >> "$RAW_SUBDOMAINS" || true
+                fi
+                ;;
+            *)
+                echo -e "${YELLOW}  [!] certspotter returned no usable data; skipping${NC}"
+                ;;
+        esac
     fi
 
     if [ -x "$BUGBOUNTY_DIR/../auto-scanner/integrations/shodan_reconsx.sh" ]; then
@@ -215,24 +271,89 @@ reconnaissance() {
     SUBS=$(wc -l < "$OUTPUT_DIR/authorized_subdomains.txt")
     echo -e "${GREEN}  ✓ $SUBS subdomains found${NC}"
     
-    echo -e "${YELLOW}[1.2] HTTP probing${NC}"
-    httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null
-    
+    # BB_PASSIVE_ONLY=1 stops before any stage that touches the target directly
+    # (httpx/katana). gau/waybackurls/crt.sh above are passive and still run.
+    if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
+        echo -e "${YELLOW}  [passive-only] skipping httpx/katana (active stages)${NC}"
+    else
+        echo -e "${YELLOW}[1.2] HTTP probing${NC}"
+        # Guard: there are TWO different tools called 'httpx' — ProjectDiscovery's
+        # recon httpx (what this pipeline needs) and the Python httpx HTTP-client
+        # CLI. Only PD's accepts -silent; if the wrong one is installed, say so
+        # instead of failing silently.
+        if ! check_tool httpx; then
+            echo -e "${YELLOW}  [!] httpx not installed; skipping HTTP probing${NC}"
+        elif httpx -version 2>&1 | grep -qi "usage:"; then
+            echo -e "${YELLOW}  [!] installed 'httpx' is not ProjectDiscovery httpx (looks like the Python httpx CLI); skipping. Install PD httpx.${NC}"
+        else
+            # Enriched output: tech, title, server, CNAME, ASN, status — enables
+            # subdomain-takeover triage and per-asset tech fingerprinting.
+            httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" \
+                -td -title -server -cname -asn -status-code -json \
+                -o "$OUTPUT_DIR/httpx.json" -silent 2>/dev/null \
+                || httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null
+        fi
+    fi
+
     echo -e "${YELLOW}[1.3] Wayback URLs${NC}"
     echo "$TARGET" | gau --threads 5 2>/dev/null | sort -u > "$OUTPUT_DIR/wayback_raw.txt"
     waybackurls "$TARGET" >> "$OUTPUT_DIR/wayback_raw.txt" 2>/dev/null
     sort -u "$OUTPUT_DIR/wayback_raw.txt" -o "$OUTPUT_DIR/wayback_raw.txt"
     scope_filter_file "$OUTPUT_DIR/wayback_raw.txt" "$OUTPUT_DIR/wayback.txt"
-    
-    echo -e "${YELLOW}[1.4] JS endpoints${NC}"
-    katana -u "https://$TARGET" -d 3 -jc \
-        -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
-        -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null
-    scope_filter_file "$OUTPUT_DIR/js_endpoints_raw.txt" "$OUTPUT_DIR/js_endpoints.txt"
-    
+
+    if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
+        echo -e "${YELLOW}  [passive-only] skipping katana crawl${NC}"
+    else
+        echo -e "${YELLOW}[1.4] JS endpoints${NC}"
+        # -cs restricts the crawl to the in-scope FQDN so it cannot wander to
+        # unlisted subdomains.
+        katana -u "https://$TARGET" -d 3 -jc \
+            -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
+            -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null
+        scope_filter_file "$OUTPUT_DIR/js_endpoints_raw.txt" "$OUTPUT_DIR/js_endpoints.txt"
+
+        echo -e "${YELLOW}[1.4b] JS secret/endpoint analysis${NC}"
+        # Pull endpoints + secrets out of discovered JS (best-effort, optional tools).
+        grep -iE '\.js(\?|$)' "$OUTPUT_DIR/js_endpoints.txt" 2>/dev/null | sort -u > "$OUTPUT_DIR/js_files.txt" || true
+        if check_tool jsluice && [ -s "$OUTPUT_DIR/js_files.txt" ]; then
+            while IFS= read -r jsurl; do
+                [ -n "$jsurl" ] || continue
+                curl -s "$jsurl" 2>/dev/null | jsluice urls 2>/dev/null
+            done < "$OUTPUT_DIR/js_files.txt" | sort -u > "$OUTPUT_DIR/js_extracted_urls.txt" || true
+        elif ! check_tool jsluice; then
+            echo -e "${YELLOW}  [!] jsluice not installed; skipping JS URL extraction${NC}"
+        fi
+        if check_tool secretfinder && [ -s "$OUTPUT_DIR/js_files.txt" ]; then
+            while IFS= read -r jsurl; do
+                [ -n "$jsurl" ] || continue
+                secretfinder -i "$jsurl" -o cli 2>/dev/null
+            done < "$OUTPUT_DIR/js_files.txt" >> "$OUTPUT_DIR/js_secrets.txt" || true
+        fi
+        # Source maps leak original source + internal routes.
+        grep -iE '\.js(\?|$)' "$OUTPUT_DIR/js_files.txt" 2>/dev/null \
+            | sed -E 's/(\.js)(\?.*)?$/\1.map/' | sort -u > "$OUTPUT_DIR/js_sourcemaps_candidates.txt" || true
+
+        echo -e "${YELLOW}[1.4c] API surface discovery${NC}"
+        # Probe common API/spec paths (in-scope host only).
+        : > "$OUTPUT_DIR/api_specs.txt"
+        for sp in /swagger.json /openapi.json /v2/api-docs /v3/api-docs /api-docs /graphql /.well-known/openid-configuration; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
+            [ "$code" = "200" ] && echo "https://${TARGET}${sp}  ($code)" >> "$OUTPUT_DIR/api_specs.txt"
+        done
+    fi
+
     echo -e "${YELLOW}[1.5] Parameter discovery${NC}"
-    cat "$OUTPUT_DIR/wayback.txt" | grep "?" | unfurl keys | sort -u > "$OUTPUT_DIR/params.txt" 2>/dev/null
-    
+    grep "?" "$OUTPUT_DIR/wayback.txt" 2>/dev/null | unfurl keys 2>/dev/null | sort -u > "$OUTPUT_DIR/params.txt" || true
+    # Active param mining (optional tools, skipped in passive-only).
+    if [ -z "${BB_PASSIVE_ONLY:-}" ]; then
+        if check_tool paramspider; then
+            paramspider -d "$TARGET" -o "$OUTPUT_DIR/paramspider.txt" 2>/dev/null || true
+        fi
+        if check_tool arjun; then
+            arjun -u "https://$TARGET" -oT "$OUTPUT_DIR/arjun.txt" 2>/dev/null || true
+        fi
+    fi
+
     echo -e "${GREEN}[✓] Reconnaissance completed${NC}"
 }
 
@@ -713,6 +834,12 @@ esac
 
 print_banner
 
+# Global flag: --passive-only (anywhere on the line) disables stages that touch
+# the target directly (httpx/katana/param-mining). Passive sources still run.
+for _arg in "$@"; do
+    [ "$_arg" = "--passive-only" ] && export BB_PASSIVE_ONLY=1
+done
+
 case "${1:-help}" in
     new)
         new_program "${2:-}"
@@ -791,6 +918,9 @@ case "${1:-help}" in
         echo "  report <domain>   - Generate report"
         echo "  platforms         - View platforms"
         echo "  zeroday           - 0-day methodology"
+        echo ""
+        echo "Flags:"
+        echo "  --passive-only    - skip stages that touch the target (httpx/katana/param-mining)"
         echo ""
         echo "Current researcher: $RESEARCHER (change with BB_RESEARCHER=handle)"
         echo "Scope tracker: $PROGRAMS_DIR"

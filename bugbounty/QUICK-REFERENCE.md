@@ -205,6 +205,155 @@ Untrusted serialized data is deserialized into live objects → RCE.
   strings), Ruby, and .NET have the equivalent primitive.
 - Always one of the highest-paid classes when reachable (Critical/RCE).
 
+### Account Takeover via password reset — CWE-640
+The reset flow is the highest-value logic target: taking over an account pays
+more than most injection bugs.
+
+```bash
+# Host-header poisoning: the reset link is built from the Host header.
+#   POST /password/reset   Host: attacker.com      (or X-Forwarded-Host)
+#   -> victim receives a link pointing at attacker.com with a valid token.
+# Other checks:
+#   - token in the Referer leaked to third-party scripts/analytics
+#   - token not invalidated after use / after a new request (reuse)
+#   - predictable/short token, or account id swappable in the confirm step
+#   - response-based: reset confirmation returns the token or 200 for any email
+```
+- Where to look: `/forgot`, `/reset`, `/account/recover`, magic-link login.
+- Chains with user-enumeration to target specific accounts.
+
+### Broken Access Control / IDOR (depth) — CWE-639 / CWE-285
+#1 OWASP category. Go beyond "change the numeric id":
+- **Object-level**: swap UUIDs/slugs, not just integers; try IDs from a second
+  account you control (A↔B oracle).
+- **Function-level**: call admin/privileged endpoints as a low-priv user
+  (method + path), even if the UI hides them.
+- **Tenant isolation**: cross-org/cross-workspace access in multi-tenant SaaS.
+- **GraphQL**: field-level authz — a node denied on one query may be reachable
+  via another resolver/edge.
+
+### Mass assignment — CWE-915
+Send extra fields the UI never shows; the backend binds them blindly.
+
+```bash
+# Add privileged fields to a normal update/create request:
+#   {"name":"x","isAdmin":true}   {"...":"...","role":"admin","verified":true,"balance":9999}
+```
+- Where to look: profile/settings update, signup, any `PATCH`/`PUT` to an object.
+
+### Race conditions — CWE-362
+Fire N identical requests in the same instant so a check-then-act window is
+crossed before state updates. One of the most profitable modern classes.
+- Tooling: Burp Repeater "send group in parallel" (single-packet attack) or
+  Turbo Intruder.
+- Targets: coupon/gift-card redemption, balance withdrawal, vote/like limits,
+  "invite only once", 2FA/OTP attempts, file-upload quotas.
+
+### JWT / OAuth flaws — CWE-347 / CWE-287
+```bash
+# JWT: try alg:none; RS256->HS256 confusion (sign with the public key as HMAC
+#      secret); kid injection (path/SQL in the kid header); unverified exp.
+# OAuth: redirect_uri bypass (suffix/subdomain/open-redirect on allowed host),
+#        missing/again-usable state (CSRF), PKCE absent, token in the URL
+#        fragment leaked via Referer, implicit-flow leakage.
+```
+- Where to look: any SSO/login, API bearer tokens, "login with X".
+
+### GraphQL abuse
+```bash
+# Introspection on? -> map the whole schema:
+#   {"query":"{__schema{types{name fields{name}}}}"}
+# Batching/aliasing to bypass rate limits (many ops in one request):
+#   {"query":"{a:login(...){t} b:login(...){t} c:login(...){t}}"}
+```
+- Also: field-level authz gaps, and DoS via deeply nested/recursive queries.
+- Tooling: `graphql-cop`, `clairvoyance` (schema recovery when introspection off), InQL.
+
+### Prototype pollution — CWE-1321
+Attacker controls an object key like `__proto__`/`constructor.prototype`,
+polluting the base prototype → client-side gadget (DOM XSS) or server-side
+(Node) config/behaviour change, sometimes RCE.
+```bash
+# JSON body / query:  {"__proto__":{"isAdmin":true}}   ?a[__proto__][x]=1
+```
+- Where to look: deep-merge of user JSON, query-string parsers, config loaders.
+
+### Web cache poisoning / deception — CWE-525 / CWE-444-adjacent
+- **Poisoning**: an unkeyed input (header like `X-Forwarded-Host`, `X-Forwarded-Scheme`)
+  changes the cached response; the poisoned copy is served to everyone.
+- **Deception**: trick the cache into storing an authenticated page under a
+  cacheable path (`/account/profile.css`) so the next visitor reads it.
+- Tooling: Param Miner (unkeyed-input discovery).
+
+### CORS misconfiguration — CWE-942
+```bash
+# Reflecting the Origin + allowing credentials = cross-site data theft:
+curl -s -I -H "Origin: https://evil.example" https://target/api/me | grep -i access-control
+# Red flags: ACAO reflects arbitrary Origin, or ACAO: null, with
+#            Access-Control-Allow-Credentials: true.
+```
+
+### Subdomain takeover
+A dangling DNS record (CNAME) points to a de-provisioned third-party service
+you can re-register (S3, GitHub Pages, Heroku, Azure, Fastly...).
+```bash
+# Look for NXDOMAIN/404 "no such bucket/app" fingerprints on resolved CNAMEs:
+#   dig CNAME sub.target.com   then fetch and match the service's claim page.
+```
+- Tooling: `subjack`, `nuclei -t takeovers/`. High impact, often accepted.
+
+### CSV / formula injection — CWE-1236
+A field starting with `= + - @` is executed as a formula when the exported
+CSV is opened in Excel/Sheets/Calc, regardless of CSV quoting.
+- Where to look: any "export to CSV" fed by attacker-controlled data (names,
+  reviews, SSIDs, support-ticket fields). Fix: prefix such fields with `'`.
+
+### Path traversal with encoding bypass — CWE-22
+When a naive filter strips `../`, re-encode the dots/slashes so the filter
+misses them but the server still decodes them to a traversal.
+
+```bash
+# Single, double, and mixed URL-encoding of "../":
+#   ..%2f    %2e%2e%2f    ..%252f    %252e%252e%252f   (double-encoded)
+#   ....//   ..%c0%af     ..%u2215                      (overlong / unicode)
+# Example that bypassed a strip-filter and read /etc/passwd:
+#   GET /images/.%252e/.%252e/.%252e/.%252e/etc/passwd
+```
+- Where to look: file/image/download/preview params (`?file=`, `?path=`,
+  `?page=`, `?template=`), and anything that maps user input to a filesystem
+  path. Confirm with `/etc/passwd` (Linux) or `C:\Windows\win.ini` (Windows).
+
+### NoSQL / Elasticsearch (Painless) injection — CWE-943 / CWE-94
+Search/sort parameters passed to Elasticsearch can accept a `_script` sort. If
+the script source is attacker-controlled, you get a **blind script-execution
+oracle**: sort by a secret field and read it out through the result ordering.
+
+```jsonc
+// Benign vs injected sort_query (the ordering leaks data):
+//   "script":{"source":"1","lang":"painless"}                 // constant (control)
+//   "script":{"source":"doc['_seq_no'].value","lang":"painless"} // reads a field → order oracle
+```
+- Where to look: GraphQL/REST search endpoints exposing `sort`, `sort_query`,
+  `order`, `aggs`, or raw query DSL. Also classic NoSQL: `{"$gt":""}`,
+  `{"$ne":null}`, `[$regex]` in JSON bodies and `param[$ne]=` in query strings.
+- Impact: auth bypass, blind data exfiltration, sometimes RCE (older ES/Groovy).
+
+### Cloud secrets & identity in JS bundles — CWE-200 / CWE-798
+SPA bundles (`_nuxt/*.js`, `_next/static/*.js`, `main.*.js`) routinely embed
+cloud identifiers and keys. The high-impact one is an **AWS Cognito
+IdentityPoolId** — if the pool allows unauthenticated identities with an
+over-privileged role, anyone can mint temporary AWS creds.
+
+```bash
+# Grep pulled-down JS for identifiers/keys:
+#   IdentityPoolId  -> eu-west-1:xxxxxxxx-....   (Cognito; test unauth GetId/GetCredentialsForIdentity)
+#   AKIA / ASIA[0-9A-Z]{16}  (AWS keys)   AIza[0-9A-Za-z_-]{35}  (Google)
+#   firebaseio.com / supabase.co / amazonaws.com bucket URLs
+```
+- Where to look: every JS file from the recon crawl (the `secretfinder`/`jsluice`
+  stage). For a Cognito pool, test unauthenticated `cognito-identity` GetId +
+  GetCredentialsForIdentity, then probe what the assumed role can reach.
+
 ---
 
 ## 🛠️ Essential Tools

@@ -11,7 +11,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BB_VERSION="1.0.5"
+BB_VERSION="1.0.6"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUGBOUNTY_DIR="$SCRIPT_DIR"

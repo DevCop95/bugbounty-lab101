@@ -13,7 +13,7 @@ umask 077
 
 # Version
 # shellcheck disable=SC2034
-BB_VERSION="1.0.5"
+BB_VERSION="1.0.6"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'

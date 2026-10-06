@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6] - 2026-10-06
+
+### Added
+- **Technique Deep-Dives** section in `bugbounty/QUICK-REFERENCE.md` covering four
+  modern web classes with detection steps and real-world context:
+  - Server-Side Template Injection (SSTI, CWE-1336/CWE-94) — incl. Handlebars AST injection
+  - XML External Entity (XXE, CWE-611) — file read, blind/OOB, SAML/Office-upload surfaces
+  - Insecure `postMessage` (CWE-345/CWE-346) — origin-validation bypass → authorized requests on behalf of a victim
+  - Insecure Deserialization (CWE-502) — Python pickle RCE and the ML model-file (`.pkl`/`joblib`/`.pt`) vector
+
+### Changed
+- `BB_VERSION` bumped to `1.0.6` in `bugbounty-hunter.sh` and `auto-scanner/lib/common.sh`.
+
 ## [1.0.5] - 2026-08-24
 
 ### Added

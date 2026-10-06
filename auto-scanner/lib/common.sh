@@ -13,7 +13,7 @@ umask 077
 
 # Version
 # shellcheck disable=SC2034
-BB_VERSION="1.0.6"
+BB_VERSION="1.0.7"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -65,6 +65,55 @@ scope_filter_file() {
             printf '%s\n' "$candidate" >> "$output_file"
         fi
     done < "$input_file"
+}
+
+# ── CDN / shared-edge safety guard ──────────────────────────────────
+# Scope in bug bounty is granted by hostname, but active scans (nmap -sS,
+# -p-, --script vuln) hit a resolved IP. If that IP belongs to a CDN /
+# shared edge (Cloudflare, Fastly, Akamai, etc.), scanning it is both
+# useless (you hit the edge, not the asset) and OUT OF SCOPE — you would be
+# port-scanning a third party. These are the published edge ranges of the
+# major CDNs; membership is tested with python3's ipaddress module.
+# Usage: if cdn_name=$(ip_cdn_owner "1.2.3.4"); then echo "behind $cdn_name"; fi
+ip_cdn_owner() {
+    local ip="$1"
+    [ -n "$ip" ] || return 1
+    python3 - "$ip" <<'PY'
+import ipaddress, sys
+ip = sys.argv[1]
+cdn = {
+    "Cloudflare": ["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22",
+        "103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20",
+        "188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15",
+        "104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22"],
+    "Fastly":   ["151.101.0.0/16","199.232.0.0/16"],
+    "Akamai":   ["23.32.0.0/11","23.192.0.0/11","104.64.0.0/10","184.24.0.0/13","2.16.0.0/13"],
+    "Incapsula":["198.143.32.0/19","149.126.72.0/21","103.28.248.0/22"],
+    "Sucuri":   ["192.88.134.0/23","185.93.228.0/22","66.248.200.0/22"],
+}
+try:
+    addr = ipaddress.ip_address(ip)
+except ValueError:
+    sys.exit(2)
+for name, nets in cdn.items():
+    if any(addr in ipaddress.ip_network(n) for n in nets):
+        print(name); sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Returns 0 and prints a warning if DOMAIN resolves behind a known CDN edge,
+# so an active-scan stage can skip nmap against a third-party IP.
+# Usage: if resolves_behind_cdn "$DOMAIN" "$TARGET_IP"; then skip_active; fi
+resolves_behind_cdn() {
+    local domain="$1" ip="$2" owner
+    [ -n "$ip" ] || return 1
+    if owner=$(ip_cdn_owner "$ip"); then
+        log_warning "$domain resolves to $ip, which is a $owner edge IP."
+        log_warning "Skipping active port/vuln scans: that IP is a third party, not the in-scope asset (out of scope)."
+        return 0
+    fi
+    return 1
 }
 
 # ── Domain parsing ──────────────────────────────────────────────────

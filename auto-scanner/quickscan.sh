@@ -31,6 +31,8 @@ TARGET_URL="$1"
 require_scope "$TARGET_URL" || exit 1
 DOMAIN=$(normalize_target "$TARGET_URL") || exit 1
 TARGET_IP=$(dig +short "$DOMAIN" | head -1)
+# Do not port-scan a CDN/shared edge IP — it is a third party and out of scope.
+if resolves_behind_cdn "$DOMAIN" "$TARGET_IP"; then TARGET_IP=""; fi
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -60,7 +62,11 @@ echo ""
 # 3. Puertos abiertos
 echo -e "${YELLOW}[3/5]${NC} Scanning main ports..."
 echo ""
-nmap -sT --top-ports 20 -T4 "$TARGET_IP" 2>/dev/null | grep -E "^[0-9]+/tcp|^PORT"
+if [ -n "$TARGET_IP" ]; then
+    nmap -sT --top-ports 20 -T4 "$TARGET_IP" 2>/dev/null | grep -E "^[0-9]+/tcp|^PORT"
+else
+    echo -e "${YELLOW}  ⏭ Skipped — target behind CDN (no in-scope IP to port-scan)${NC}"
+fi
 echo ""
 
 # 4. Verificar HTTPS

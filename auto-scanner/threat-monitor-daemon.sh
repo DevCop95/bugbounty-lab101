@@ -26,9 +26,10 @@ echo -e "${CYAN}═════════════════════�
 echo ""
 
 check_for_new_threats() {
-    # Get current feed
-    CURRENT=$(curl -s "$FEED_URL" | jq '.[0].id')
-    
+    # Get current feed — use the MAX id, not .[0].id, so detection does not
+    # depend on the feed being pre-sorted newest-first.
+    CURRENT=$(curl -s "$FEED_URL" | jq '[.[].id] | max')
+
     # Verify last check
     if [ -f "$LAST_CHECK" ]; then
         LAST=$(cat "$LAST_CHECK")
@@ -41,10 +42,11 @@ check_for_new_threats() {
         echo -e "${RED}[!] NEW THREATS DETECTED${NC}"
         echo ""
         
-        # Get new articles
+        # Get new articles — sort by a NUMERIC severity rank (sorting by the
+        # string ordered alphabetically: ALTA < BAJA < CRITICA < MEDIA, wrong).
         curl -s "$FEED_URL" | jq -r "
-            [.[] | select(.id > $LAST)] | 
-            sort_by(.severidad) | reverse |
+            [.[] | select(.id > $LAST)] |
+            sort_by(.severidad | if . == \"CRITICA\" then 4 elif . == \"ALTA\" then 3 elif . == \"MEDIA\" then 2 else 1 end) | reverse |
             .[] |
             \"\(.severidad | if . == \"CRITICA\" then \"🔴\" elif . == \"ALTA\" then \"🟠\" elif . == \"MEDIA\" then \"🟡\" else \"🟢\" end) [\(.severidad)] \(.titulo)\n   \(.resumen[0:150])...\n   Source: \(.fuente)\n\"
         "

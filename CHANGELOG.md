@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - 2026-10-06
+
+### Fixed
+- **`auto-scanner/github-scan.sh` rewritten** — the old version was largely
+  non-functional: it only read the root of `master`/`main`, the secret "search"
+  was count-only via an API that requires auth yet never used `GITHUB_TOKEN`, and
+  it checked `github.com/<repo>/.git/config` (always 404). The new version uses
+  `GITHUB_TOKEN` when present, parses with `jq`, scans the **full git history**
+  with `trufflehog` (verified-only) or `gitleaks`, keeps a committed-secret-file
+  check across branches, and adds a **dependency-confusion** check (flags npm
+  deps that do not resolve on the public registry). The bogus `.git/config`
+  check was removed.
+- **`auto-scanner/threat-monitor-daemon.sh`** — severity ordering was alphabetical
+  (`sort_by(.severidad)` → ALTA < BAJA < CRITICA < MEDIA, wrong). Now sorts by a
+  numeric rank so CRITICA surfaces first. New-item detection now uses `max(.id)`
+  instead of `.[0].id`, so it no longer assumes the feed is pre-sorted.
+- **`auto-scanner/tools/registry.sh`** — fixed 3 malformed tool URLs that had a
+  space instead of `/` (`dnsgen`, `linkfinder`, `bbsql`).
+
+### Added
+- **CDN / shared-edge scope guard** in `auto-scanner/lib/common.sh`
+  (`ip_cdn_owner` / `resolves_behind_cdn`). Active scanners (`quickscan.sh`,
+  `autopentest.sh`, `autopentest-pro.sh`, `pentest-express.sh`) now skip nmap
+  when the target resolves to a Cloudflare/Fastly/Akamai/Incapsula/Sucuri edge
+  IP — port-scanning that IP hits a third party and is out of scope.
+
+### Changed
+- `BB_VERSION` bumped to `1.0.7` in `bugbounty-hunter.sh` and `auto-scanner/lib/common.sh`.
+
 ## [1.0.6] - 2026-10-06
 
 ### Added

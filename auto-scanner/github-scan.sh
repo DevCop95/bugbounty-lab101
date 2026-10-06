@@ -3,24 +3,21 @@
 # GitHub Repo Scanner
 # ============================================
 # Usage: ./github-scan.sh <user/repo>
-# 
+#
 # Scans a GitHub repository for:
-# - Exposed sensitive files
-# - Hardcoded secrets
-# - Insecure configurations
+# - Secret files committed to the tree (.env, id_rsa, *.pem, ...)
+# - Verified secrets across the FULL git history (trufflehog / gitleaks)
+# - Dependency-confusion risk (internal/unclaimed package names)
+#
+# Auth: export GITHUB_TOKEN=<pat> for higher API limits and code search.
+# Optional engines (auto-detected): trufflehog, gitleaks, git, jq.
 # ============================================
 
-set -eo pipefail
+set -uo pipefail   # NOTE: no `-e` — a non-match from grep/curl must not abort the scan.
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-# Check arguments
 if [ $# -eq 0 ]; then
     echo -e "${RED}Usage: $0 <user/repo>${NC}"
     echo "Example: $0 your-user/your-repo"
@@ -31,179 +28,147 @@ REPO="$1"
 REPO_URL="https://github.com/$REPO"
 API_URL="https://api.github.com/repos/$REPO"
 
+# Build auth header array only when a token is present (empty array = no header).
+AUTH_HEADER=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    AUTH_HEADER=(-H "Authorization: Bearer $GITHUB_TOKEN")
+fi
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║                GITHUB REPO SCANNER v1.0                     ║"
+echo "║                GITHUB REPO SCANNER v2.0                     ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
-
 echo -e "${BLUE}Repository:${NC} $REPO_URL"
-echo ""
-
-# 1. Repository information
-echo -e "${YELLOW}[1/6]${NC} Getting repository information..."
-REPO_INFO=$(curl -s "$API_URL")
-
-if echo "$REPO_INFO" | grep -q '"message": "Not Found"'; then
-    echo -e "${RED}  ✗ Repository not found${NC}"
-    exit 1
+if [ ${#AUTH_HEADER[@]} -eq 0 ]; then
+    echo -e "${YELLOW}No GITHUB_TOKEN set — API limits are low and code search is disabled.${NC}"
 fi
+echo ""
 
-if echo "$REPO_INFO" | grep -q '"message": "API rate limit exceeded"'; then
-    echo -e "${RED}  ✗ GitHub API rate limit exceeded. Set GITHUB_TOKEN env var for higher limits.${NC}"
-    exit 1
+# ── 1. Repository information ────────────────────────────────────────
+echo -e "${YELLOW}[1/5]${NC} Getting repository information..."
+REPO_INFO=$(curl -s "${AUTH_HEADER[@]}" "$API_URL")
+
+if have jq; then
+    MESSAGE=$(echo "$REPO_INFO" | jq -r '.message // empty')
+    if [ "$MESSAGE" = "Not Found" ]; then
+        echo -e "${RED}  ✗ Repository not found${NC}"; exit 1
+    fi
+    if echo "$MESSAGE" | grep -qi "rate limit"; then
+        echo -e "${RED}  ✗ GitHub API rate limit exceeded. Set GITHUB_TOKEN for higher limits.${NC}"; exit 1
+    fi
+    echo -e "${GREEN}  ✓ Repository found${NC}"
+    echo "    Name:        $(echo "$REPO_INFO" | jq -r '.full_name // "?"')"
+    echo "    Description: $(echo "$REPO_INFO" | jq -r '.description // "—"')"
+    echo "    Stars:       $(echo "$REPO_INFO" | jq -r '.stargazers_count // 0')"
+    echo "    Default br.: $(echo "$REPO_INFO" | jq -r '.default_branch // "main"')"
+    DEFAULT_BRANCH=$(echo "$REPO_INFO" | jq -r '.default_branch // "main"')
+else
+    echo -e "${YELLOW}  (jq not installed — install jq for reliable parsing)${NC}"
+    if echo "$REPO_INFO" | grep -q '"message": *"Not Found"'; then
+        echo -e "${RED}  ✗ Repository not found${NC}"; exit 1
+    fi
+    DEFAULT_BRANCH="main"
 fi
-
-echo -e "${GREEN}  ✓ Repository found${NC}"
-echo "    Name: $(echo "$REPO_INFO" | grep -o '"full_name":"[^"]*"' | cut -d'"' -f4)"
-echo "    Description: $(echo "$REPO_INFO" | grep -o '"description":"[^"]*"' | cut -d'"' -f4)"
-echo "    Stars: $(echo "$REPO_INFO" | grep -o '"stargazers_count":[0-9]*' | cut -d: -f2)"
-echo "    Issues: $(echo "$REPO_INFO" | grep -o '"open_issues_count":[0-9]*' | cut -d: -f2)"
 echo ""
 
-# 2. Check sensitive files
-echo -e "${YELLOW}[2/6]${NC} Searching for sensitive files..."
-echo ""
-
+# ── 2. Secret files committed to the tree ────────────────────────────
+# A public repo serving these is a real finding: the file should never have
+# been committed. We check the default branch plus master/main.
+echo -e "${YELLOW}[2/5]${NC} Checking for secret files committed to the repo..."
 SENSITIVE_FILES=(
-    ".env"
-    ".env.local"
-    ".env.production"
-    ".env.development"
-    ".git/config"
-    ".git/credentials"
-    "config/database.yml"
-    "config/secrets.yml"
-    "wp-config.php"
-    "config.php"
-    "configuration.php"
-    "settings.py"
-    "credentials.json"
-    "service-account.json"
-    "id_rsa"
-    "id_dsa"
-    "id_ecdsa"
-    "id_ed25519"
-    ".htpasswd"
-    ".htaccess"
-    "web.config"
-    "appsettings.json"
-    "appsettings.Development.json"
-    "local.settings.json"
-    "firebase.json"
-    "gcloud.json"
-    "key.json"
-    "private.key"
-    "private.pem"
+    ".env" ".env.local" ".env.production" ".env.development"
+    "config/database.yml" "config/secrets.yml" "wp-config.php" "config.php"
+    "configuration.php" "settings.py" "credentials.json" "service-account.json"
+    "id_rsa" "id_dsa" "id_ecdsa" "id_ed25519" ".htpasswd" "web.config"
+    "appsettings.json" "appsettings.Development.json" "local.settings.json"
+    "firebase.json" "gcloud.json" "key.json" "private.key" "private.pem" ".npmrc" ".pypirc"
 )
-
 FOUND_SENSITIVE=0
-
+BRANCHES=("$DEFAULT_BRANCH" "master" "main")
+# de-dup branches
+read -r -a BRANCHES <<<"$(printf '%s\n' "${BRANCHES[@]}" | awk '!seen[$0]++' | tr '\n' ' ')"
 for file in "${SENSITIVE_FILES[@]}"; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/master/$file" 2>/dev/null)
-    
-    if [ "$STATUS" = "200" ]; then
-        echo -e "${RED}  ✗ $file - EXPOSED${NC}"
-        FOUND_SENSITIVE=$((FOUND_SENSITIVE + 1))
-    fi
-    
-    # Also check main branch
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/main/$file" 2>/dev/null)
-    
-    if [ "$STATUS" = "200" ]; then
-        echo -e "${RED}  ✗ $file (main) - EXPOSED${NC}"
-        FOUND_SENSITIVE=$((FOUND_SENSITIVE + 1))
-    fi
+    for br in "${BRANCHES[@]}"; do
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/$br/$file" 2>/dev/null || echo "000")
+        if [ "$STATUS" = "200" ]; then
+            echo -e "${RED}  ✗ $file (branch: $br) — committed to repo${NC}"
+            FOUND_SENSITIVE=$((FOUND_SENSITIVE + 1))
+            break
+        fi
+    done
 done
-
-if [ $FOUND_SENSITIVE -eq 0 ]; then
-    echo -e "${GREEN}  ✓ No exposed sensitive files found${NC}"
-fi
+[ "$FOUND_SENSITIVE" -eq 0 ] && echo -e "${GREEN}  ✓ No obvious secret files committed${NC}"
 echo ""
 
-# 3. Check exposed .git
-echo -e "${YELLOW}[3/6]${NC} Checking if .git is exposed..."
-GIT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REPO_URL/.git/config" 2>/dev/null)
-
-if [ "$GIT_STATUS" = "200" ]; then
-    echo -e "${RED}  ✗ .git is publicly exposed${NC}"
+# ── 3. Verified secrets across full history (real engine) ────────────
+echo -e "${YELLOW}[3/5]${NC} Scanning full git history for verified secrets..."
+if have trufflehog; then
+    echo -e "${BLUE}  → trufflehog (verified only)${NC}"
+    trufflehog git "$REPO_URL" --only-verified --no-update 2>/dev/null || \
+        echo -e "${YELLOW}  (trufflehog returned no verified secrets or could not clone)${NC}"
+elif have gitleaks && have git; then
+    echo -e "${BLUE}  → gitleaks (full history)${NC}"
+    TMP_CLONE=$(mktemp -d "/tmp/ghscan.XXXXXX")
+    if git clone --quiet "$REPO_URL" "$TMP_CLONE" 2>/dev/null; then
+        gitleaks detect --source "$TMP_CLONE" --no-banner 2>/dev/null || \
+            echo -e "${YELLOW}  (gitleaks found nothing or errored)${NC}"
+    else
+        echo -e "${YELLOW}  (could not clone repo for gitleaks)${NC}"
+    fi
+    rm -rf -- "$TMP_CLONE"
 else
-    echo -e "${GREEN}  ✓ .git is not exposed${NC}"
+    echo -e "${YELLOW}  ⚠ Neither trufflehog nor gitleaks installed — history NOT scanned.${NC}"
+    echo -e "${YELLOW}    Install one: 'trufflehog' (recommended) or 'gitleaks'.${NC}"
+    echo -e "${YELLOW}    (The old count-only code-search check was removed: it required auth,"
+    echo -e "     never used GITHUB_TOKEN, and only printed result counts — not actionable.)${NC}"
 fi
 echo ""
 
-# 4. Search for secrets in code
-echo -e "${YELLOW}[4/6]${NC} Searching for potential hardcoded secrets..."
-echo ""
-
-# Use GitHub search API
-SEARCH_QUERIES=(
-    "password"
-    "api_key"
-    "secret"
-    "token"
-    "AWS_ACCESS_KEY"
-    "PRIVATE KEY"
-)
-
-for query in "${SEARCH_QUERIES[@]}"; do
-    RESULTS=$(curl -s "https://api.github.com/search/code?q=$query+repo:$REPO&per_page=3" 2>/dev/null)
-    COUNT=$(echo "$RESULTS" | grep -o '"total_count":[0-9]*' | cut -d: -f2)
-    
-    if [ -n "$COUNT" ] && [ "$COUNT" -gt 0 ]; then
-        echo -e "${YELLOW}  ⚠ $query - $COUNT results${NC}"
+# ── 4. Dependency-confusion surface ──────────────────────────────────
+# Pull package names from manifests and flag internal/unclaimed names that
+# do NOT exist on the public registry (claimable → dependency confusion).
+echo -e "${YELLOW}[4/5]${NC} Checking dependency-confusion surface..."
+if have jq; then
+    PKG_JSON=$(curl -s "https://raw.githubusercontent.com/$REPO/$DEFAULT_BRANCH/package.json" 2>/dev/null)
+    if echo "$PKG_JSON" | jq -e . >/dev/null 2>&1; then
+        NAMES=$(echo "$PKG_JSON" | jq -r '((.dependencies // {}) + (.devDependencies // {})) | keys[]' 2>/dev/null)
+        CONF=0
+        while IFS= read -r pkg; do
+            [ -n "$pkg" ] || continue
+            # npm registry: 404 = name not published publicly = potentially claimable
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/$pkg" 2>/dev/null || echo "000")
+            if [ "$code" = "404" ]; then
+                echo -e "${RED}  ✗ '$pkg' not on public npm (dependency-confusion candidate)${NC}"
+                CONF=$((CONF + 1))
+            fi
+        done <<<"$NAMES"
+        [ "$CONF" -eq 0 ] && echo -e "${GREEN}  ✓ All npm deps resolve publicly${NC}"
+    else
+        echo -e "${GREEN}  ✓ No parseable package.json on default branch${NC}"
     fi
-done
+else
+    echo -e "${YELLOW}  (jq required for dependency-confusion check — skipped)${NC}"
+fi
 echo ""
 
-# 5. Check dependencies
-echo -e "${YELLOW}[5/6]${NC} Checking dependency files..."
-echo ""
-
-DEP_FILES=("package.json" "requirements.txt" "Gemfile" "composer.json" "go.mod" "Cargo.toml")
-
-for file in "${DEP_FILES[@]}"; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/master/$file" 2>/dev/null)
-    
-    if [ "$STATUS" = "200" ]; then
-        echo -e "${GREEN}  ✓ $file found${NC}"
-    fi
-done
-echo ""
-
-# 6. Check CI/CD
-echo -e "${YELLOW}[6/6]${NC} Checking CI/CD configuration..."
-echo ""
-
-CI_FILES=(".github/workflows" ".travis.yml" "Jenkinsfile" ".circleci/config.yml" "azure-pipelines.yml")
-
+# ── 5. CI/CD presence (informational) ────────────────────────────────
+echo -e "${YELLOW}[5/5]${NC} Checking CI/CD configuration (informational)..."
+CI_FILES=(".github/workflows/ci.yml" ".travis.yml" "Jenkinsfile" ".circleci/config.yml" "azure-pipelines.yml" ".gitlab-ci.yml")
 for file in "${CI_FILES[@]}"; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/master/$file" 2>/dev/null)
-    
-    if [ "$STATUS" = "200" ]; then
-        echo -e "${GREEN}  ✓ $file found${NC}"
-    fi
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com/$REPO/$DEFAULT_BRANCH/$file" 2>/dev/null || echo "000")
+    [ "$STATUS" = "200" ] && echo -e "${GREEN}  ✓ $file present${NC}"
 done
 echo ""
 
-# Summary
+# ── Summary ──────────────────────────────────────────────────────────
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}Scan completed${NC}"
-echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-echo ""
-
-if [ $FOUND_SENSITIVE -gt 0 ]; then
-    echo -e "${RED}⚠ WARNING: $FOUND_SENSITIVE exposed sensitive files found${NC}"
-    echo ""
-    echo "RECOMMENDED ACTIONS:"
-    echo "1. Move sensitive files to .gitignore"
-    echo "2. Rotate all exposed secrets"
-    echo "3. Use environment variables or GitHub Secrets"
-    echo "4. Review git history for previous secrets"
+if [ "$FOUND_SENSITIVE" -gt 0 ]; then
+    echo -e "${RED}⚠ $FOUND_SENSITIVE secret file(s) committed to the repo${NC}"
+    echo "RECOMMENDED: remove from tree, rotate the secrets, purge git history (git filter-repo / BFG), add to .gitignore."
 else
-    echo -e "${GREEN}✓ No critical security issues found${NC}"
+    echo -e "${GREEN}✓ No committed secret files found (history scan depends on engine availability above)${NC}"
 fi
-echo ""
-echo "For more information:"
-echo "  https://github.com/$REPO"
-echo ""
+echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"

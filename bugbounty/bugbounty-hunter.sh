@@ -11,7 +11,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BB_VERSION="1.1.0"
+BB_VERSION="1.2.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUGBOUNTY_DIR="$SCRIPT_DIR"
@@ -340,6 +340,16 @@ reconnaissance() {
             code=$(curl -s -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
             [ "$code" = "200" ] && echo "https://${TARGET}${sp}  ($code)" >> "$OUTPUT_DIR/api_specs.txt"
         done
+
+        echo -e "${YELLOW}[1.4d] Browser-driven real-traffic capture${NC}"
+        # Drive a real headless Chromium so we see the requests the SPA actually
+        # makes (real headers, XHR/fetch/WS) past client-gating walls a static
+        # curl can't pass. Scope-enforced + mandatory research header injected by
+        # the wrapper. Optional: skipped cleanly when node/playwright absent.
+        if [ -x "$BUGBOUNTY_DIR/../auto-scanner/integrations/browser_capture.sh" ]; then
+            "$BUGBOUNTY_DIR/../auto-scanner/integrations/browser_capture.sh" \
+                "https://$TARGET" "$OUTPUT_DIR" || true
+        fi
     fi
 
     echo -e "${YELLOW}[1.5] Parameter discovery${NC}"

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-10-14
+
+### Added
+- **Browser-driven real-traffic capture** (`auto-scanner/integrations/browser_capture.js`
+  + `browser_capture.sh`) — drives a real headless Chromium via Playwright against
+  one authorized URL and records every request/response/WebSocket frame the page
+  actually makes, with real headers. This sees the requests a modern JS SPA
+  issues past client-gating walls (dynamic client-id, `Client-Version`,
+  anti-automation checks) that a static `curl` can't reproduce and that otherwise
+  return generic `4xx`/`410` walls. Scope-enforced before the browser launches;
+  degrades gracefully when node/Playwright are absent. Wired into the recon
+  pipeline as stage `[1.4d]` (skipped under `--passive-only`).
+- **Per-program custom-header injection** — the capture wrapper resolves a
+  mandatory research/identification header from `BB_EXTRA_HEADERS`,
+  `BB_RESEARCH_HEADER`, or auto-detected from the matching `programs/*.md`, and
+  injects it into every request the browser makes, so programs that require such
+  a header (e.g. `X-HackerOne-Research: <handle>`) can be scanned without
+  forfeiting eligibility.
+- **Two-agent research/verify workflow** (`docs/agent-workflow.md`) — codifies the
+  investigator + independent-reviewer pattern: every claim backed by something
+  executed and observed, severity never inflated beyond what was proven, and a
+  reviewer sign-off before any submission.
+
 ## [1.1.0] - 2026-10-06
 
 ### Added

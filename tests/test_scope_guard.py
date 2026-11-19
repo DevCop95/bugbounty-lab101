@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from scope_guard import ScopeError, authorize, normalize_target
+from scope_guard import ScopeError, authorize, filter_file, normalize_target
 
 
 class ScopeGuardTests(unittest.TestCase):
@@ -89,6 +89,44 @@ class ScopeGuardTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ScopeError, "invalid scope entry"):
             authorize("example.com", self.programs)
+
+    def test_batch_filter_file_partitions_and_dedups_candidates(self):
+        inp = self.programs / "input.txt"
+        auth = self.programs / "auth.txt"
+        disc = self.programs / "disc.txt"
+        cand = self.programs / "candidates-pending-scope.txt"
+        cand.write_text("existing.unlisted.example\n", encoding="utf-8")
+        inp.write_text(
+            "\n".join(
+                [
+                    "https://example.com/a",
+                    "api.example.org",
+                    "admin.example.org",
+                    "not-example.com",
+                    "not-example.com",
+                    "",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        filter_file(inp, self.programs, auth, disc, cand)
+        self.assertEqual(auth.read_text(encoding="utf-8").splitlines(), ["https://example.com/a", "api.example.org"])
+        self.assertEqual(
+            disc.read_text(encoding="utf-8").splitlines(),
+            ["admin.example.org", "not-example.com", "not-example.com"],
+        )
+        self.assertEqual(
+            cand.read_text(encoding="utf-8").splitlines(),
+            ["admin.example.org", "existing.unlisted.example", "not-example.com"],
+        )
+
+    def test_batch_filter_file_missing_input_creates_empty_outputs(self):
+        auth = self.programs / "auth.txt"
+        disc = self.programs / "disc.txt"
+        filter_file(self.programs / "missing.txt", self.programs, auth, disc)
+        self.assertEqual(auth.read_text(encoding="utf-8"), "")
+        self.assertEqual(disc.read_text(encoding="utf-8"), "")
 
 
 if __name__ == "__main__":

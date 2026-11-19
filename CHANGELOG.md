@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-11-19
+
+### Fixed
+- **Version drift**: Removed duplicate `BB_VERSION="1.2.0"` assignment in `bugbounty/bugbounty-hunter.sh` and bumped the single source of truth in `auto-scanner/lib/common.sh` to `1.2.1`.
+- **Cross-program header leak & JSON escaping**: Replaced directory-wide `grep` in `browser_capture.sh` with `resolve_program_header` (reads only the matching `programs/*.md` file) and `encode_header_json` (Python `json.dumps`) in `auto-scanner/lib/common.sh`.
+- **Pipeline data-loss bugs in `bugbounty/bugbounty-hunter.sh`**:
+  - `subfinder` now appends (`>>`) instead of `-o` truncating the apex target from `subdomains_raw.txt`.
+  - `dalfox` now runs once over `xss_candidates.txt` instead of overwriting `xss.txt` per parameter.
+  - `sqlmap` now receives `-m "$OUTPUT_DIR/sqlmap_targets.txt"` instead of ignoring piped URLs.
+  - `api_testing` now respects `BB_PASSIVE_ONLY=1` and writes individual doc files plus a valid `api_docs_index.json` instead of concatenating HTML into JSON.
+  - Propagated `RESEARCH_HEADER` and `check_tool` / wordlist existence guards across `httpx`, `katana`, `curl`, `nuclei`, `feroxbuster`, `ffuf`, and `resolve_check`.
+- **`burp_api.py`**: Reads `BURP_HOST`, `BURP_PORT`, and `BURP_API_KEY` from environment variables, passes an explicit `timeout` (default `30s`) to `urllib.request.urlopen`, and standardizes help/docstrings in English.
+- **OPSEC & hygiene**:
+  - `browser_capture.js` now redacts `Authorization`/`Cookie`/`Set-Cookie`/`X-API-Key`/`X-Auth-Token` headers by default (`BB_CAPTURE_UNREDACTED=1` to opt out), closes the browser in `try/finally`, writes outputs with mode `0600`, and updates the desktop User-Agent.
+  - `.gitignore` and `scripts/check-sensitive-files.sh` now ignore/reject private `programs/*.md` files, `cookies.txt`, `*credentials*`, and `*-keys-*.json`.
+  - Normalized CRLF line endings to LF across all tracked code and workflow files.
+
+### Added
+- **Batch scope filtering (`scripts/scope_guard.py --filter-file`)**: `scope_filter_file()` now processes all candidate lines in a single Python invocation instead of spawning a subprocess per line.
+- **Regression test suites**: Expanded `tests/test_scope_guard.py` and `tests/test_burp_api.py`, added `tests/test_duplicate_check.py` and `tests/test-pipeline-bugs.sh`, plus Node syntax/redaction checks and LF enforcement in `.github/workflows/shellcheck.yml` and `.github/dependabot.yml`.
+
 ## [1.2.0] - 2026-10-14
 
 ### Added

@@ -148,9 +148,12 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 |---------|-------------|---------|
 | `bugbounty-hunter.sh new <prog>` | Create scope tracker for a program | `./bugbounty-hunter.sh new acme-corp` |
 | `bugbounty-hunter.sh scope <target>` | Verify target is in scope | `./bugbounty-hunter.sh scope target.com` |
+| `bugbounty-hunter.sh resolve <host>` | Detect local DNS hijacking / sinkholes | `./bugbounty-hunter.sh resolve target.com` |
 | `bugbounty-hunter.sh full <target>` | Full pipeline (recon to report) | `./bugbounty-hunter.sh full target.com` |
-| `bugbounty-hunter.sh recon <target>` | Recon only, including passive Shodan CTL enrichment | `./bugbounty-hunter.sh recon target.com` |
+| `bugbounty-hunter.sh recon <target>` | Recon only (`--passive-only` skips active steps) | `./bugbounty-hunter.sh recon target.com` |
 | `bugbounty-hunter.sh report <target>` | Generate report with H1 template | `./bugbounty-hunter.sh report target.com` |
+| `browser_capture.sh <url>` | Headless Chromium traffic/XHR/WS capture | `./auto-scanner/integrations/browser_capture.sh https://target.com` |
+| `scripts/duplicate_check.py <q>` | Check past reports + build Hacktivity query | `python3 scripts/duplicate_check.py "idor booking"` |
 | `pentest.sh <url>` | Generic arsenal (400+ tools) | `pentest.sh https://target.com` |
 | `pentest.sh matrix` | Full tool matrix | `pentest.sh matrix` |
 | `pentest.sh search <function>` | Search for a tool | `pentest.sh search sql_injection` |
@@ -161,7 +164,7 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 
 </div>
 
-All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target. The passive Shodan CTL integration is optional and uses the pinned `vendor/shodan_reconsx` submodule when `recons101x` is not installed. Its hostnames are scope-filtered before any HTTP probing.
+All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target, batch-filter discovered hosts with `scripts/scope_guard.py --filter-file`, and automatically resolve the program's research/identification header (from `BB_EXTRA_HEADERS`, `BB_RESEARCH_HEADER`, or ONLY the matching `programs/<program>.md` file). Browser traffic captures redact sensitive `Authorization`/`Cookie` headers by default (`BB_CAPTURE_UNREDACTED=1` to keep raw headers locally). Passive Shodan CTL integration is optional and uses the pinned `vendor/shodan_reconsx` submodule when `recons101x` is not installed.
 
 ---
 
@@ -174,7 +177,7 @@ All active scanning commands in `bugbounty-hunter.sh` verify scope against `prog
 ║  RECON            SCANNING         ENUMERATION      EXPLOITATION        ║
 ║                                                                         ║
 ║  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐          ║
-║  │   nmap    │─▶   nikto     ──▶  enum4l     ──▶  sqlmap              
+║  │   nmap    │─▶│   nikto   │─▶│  enum4l   │─▶│  sqlmap   │          ║
 ║  │   amass   │   │ gobuster  │   │  smbclnt  │   │metasploit │          ║
 ║  │   dig     │   │  whatweb  │   │  ldapsrc  │   │  xsser    │          ║
 ║  │   whois   │   │   wfuzz   │   │  rpcclnt  │   │  wpscan   │          ║
@@ -349,30 +352,58 @@ bugbounty-lab/
 │
 ├── README.md                       # This file — overview + usage guide
 │
-├── programs/                       # Scope tracker: one .md per H1 program
+├── programs/                       # Scope tracker: one .md per H1 program (private *.md gitignored)
 │   ├── README.md
 │   └── _template.md
 │
+├── scripts/                        # Scope guard, duplicate checker, secret gate
+│   ├── scope_guard.py              # Single & batch (--filter-file) scope validator
+│   ├── duplicate_check.py          # Pre-submission self-duplicate & Hacktivity helper
+│   └── check-sensitive-files.sh    # Prevents committing raw reports/credentials/programs
+│
 ├── bugbounty/                      # Core bug bounty engine
-│   ├── bugbounty-hunter.sh         # scope/new/recon/vuln/brute/secrets/api/report
+│   ├── bugbounty-hunter.sh         # scope/resolve/new/recon/vuln/brute/secrets/api/report
 │   ├── QUICK-REFERENCE.md          # Commands, payloads, bounty by severity
 │   ├── templates/report-template.md
-│   └── reports/<target>/           # Output per phase + final report
+│   └── reports/<target>/           # Output per phase + final report (gitignored)
 │
 ├── auto-scanner/                   # Generic arsenal (400+ tools, not H1-specific)
 │   ├── pentest.sh                  # Unified command (incl. `pentest.sh bounty ...`)
+│   ├── lib/common.sh               # Shared scope, header resolution & logging helpers
+│   ├── integrations/               # browser_capture.{sh,js}, shodan_reconsx.sh
 │   ├── tools/registry.sh
-│   ├── burp-integration/
+│   ├── burp-integration/           # Scope-enforced Burp REST API wrapper (BURP_API_KEY env)
 │   └── reports/
 │
 ├── docs/
 │   ├── hackerone-workflow.md       # H1 methodology: choose program, dedup, quality
+│   ├── agent-workflow.md           # Two-agent investigator + verifier workflow
+│   ├── ai-llm-security.md          # OWASP LLM Top 10 & AI attack surfaces
 │   ├── ai-assisted-code-review.md  # AI-assisted code/JS review
 │   ├── known-cve-watchlist.md      # Most reported CVEs in Hacktivity
 │   ├── known-cwe-watchlist.md      # Most reported vuln classes in Hacktivity
 │   └── recursos/learning-resources.md
 │
+├── tests/                          # Unit & functional regression test suite
+│
 └── legacy-vm-practice/             # Classic VM lab (DVWA, Metasploitable...)
+```
+
+### Environment Variables & Local Testing
+
+- `BB_PASSIVE_ONLY=1` (or `--passive-only`): skips all active probing (`httpx`, `katana`, `browser_capture`, active API/GraphQL checks).
+- `BB_RESEARCH_HEADER="X-HackerOne-Research: <handle>"`: overrides program header auto-detection across active scanners and `browser_capture.sh`.
+- `BB_EXTRA_HEADERS='{"Header":"val"}'`: raw JSON header override for `browser_capture.js`.
+- `BB_CAPTURE_UNREDACTED=1`: keeps raw `Authorization`/`Cookie` headers in `browser_capture_raw.json` (redacted as `[REDACTED]` by default).
+- `BURP_HOST`, `BURP_PORT`, `BURP_API_KEY`: configure `auto-scanner/burp-integration/burp_api.py` without hardcoding secrets.
+- `SECLISTS_DIR`: overrides default `/usr/share/wordlists/seclists` path for Phase 3 fuzzing.
+
+Run the full test and security suite locally:
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+bash tests/test-shell-scope.sh
+bash tests/test-pipeline-bugs.sh
+bash scripts/check-sensitive-files.sh
 ```
 
 ---

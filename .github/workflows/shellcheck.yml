@@ -9,10 +9,10 @@ permissions:
 
 jobs:
   shellcheck:
-    name: Lint Shell Scripts
+    name: Lint, Security & Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -21,8 +21,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check LF line endings on code and workflow files
+        run: |
+          if git ls-files '*.sh' '*.py' '*.js' '*.yml' '*.yaml' | xargs grep -n $'\r'; then
+            echo "::error::CRLF line endings detected in tracked code/workflow files (use LF)."
+            exit 1
+          fi
+
       - name: Install ShellCheck
-        run: sudo apt-get install -y shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Run ShellCheck
         run: |
@@ -44,11 +51,23 @@ jobs:
             echo "All scripts passed ShellCheck."
           fi
 
-      - name: Syntax check
+      - name: Syntax check (Bash & Node)
         run: |
-          echo "=== Bash Syntax Check ==="
+          echo "=== Bash & Node Syntax Check ==="
           find . -name "*.sh" -not -path "./.git/*" -exec bash -n {} \;
-          echo "All scripts have valid syntax."
+          node --check auto-scanner/integrations/browser_capture.js
+          node -e '
+            const assert = require("assert");
+            const { redactHeaders } = require("./auto-scanner/integrations/browser_capture.js");
+            const out = redactHeaders({ Authorization: "Bearer tok", Cookie: "a=1", "X-Other": "ok" });
+            assert.strictEqual(out.Authorization, "[REDACTED]");
+            assert.strictEqual(out.Cookie, "[REDACTED]");
+            assert.strictEqual(out["X-Other"], "ok");
+            const raw = redactHeaders({ Authorization: "Bearer tok" }, true);
+            assert.strictEqual(raw.Authorization, "Bearer tok");
+            console.log("browser_capture.js unit assertions passed.");
+          '
+          echo "All syntax and JS checks passed."
 
       - name: Python compile and tests
         run: |
@@ -56,7 +75,9 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Functional shell tests
-        run: bash tests/test-shell-scope.sh
+        run: |
+          bash tests/test-shell-scope.sh
+          bash tests/test-pipeline-bugs.sh
 
-      - name: Reject tracked raw evidence
+      - name: Reject tracked raw evidence and private files
         run: bash scripts/check-sensitive-files.sh

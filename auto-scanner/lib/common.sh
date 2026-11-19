@@ -13,7 +13,7 @@ umask 077
 
 # Version
 # shellcheck disable=SC2034
-BB_VERSION="1.1.0"
+BB_VERSION="1.2.1"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -57,29 +57,51 @@ scope_filter_file() {
     local input_file="$1"
     local output_file="$2"
     local programs_dir="${3:-$PROGRAMS_DIR}"
-    local candidate
-    # Evidence trail: everything dropped goes here, and unlisted-but-live
-    # candidates go to candidates-pending-scope.txt for manual review instead of
-    # vanishing silently.
     local discard_log="${output_file%.*}.discarded.txt"
     local candidates_file
     candidates_file="$(dirname "$output_file")/candidates-pending-scope.txt"
-    : > "$output_file"
-    : > "$discard_log"
-    # Input may be absent when an upstream tool (e.g. katana) is not installed —
-    # produce an empty output instead of erroring.
-    [ -f "$input_file" ] || return 0
-    while IFS= read -r candidate; do
-        [ -n "$candidate" ] || continue
-        if python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$candidate" >/dev/null 2>&1; then
-            printf '%s\n' "$candidate" >> "$output_file"
-        else
-            printf '%s\n' "$candidate" >> "$discard_log"
-            printf '%s\n' "$candidate" >> "$candidates_file"
-        fi
-    done < "$input_file"
-    if [ -s "$candidates_file" ]; then
-        sort -u "$candidates_file" -o "$candidates_file"
+
+    python3 "$SCOPE_GUARD" \
+        --programs-dir "$programs_dir" \
+        --filter-file "$input_file" \
+        --authorized-out "$output_file" \
+        --discarded-out "$discard_log" \
+        --candidates-out "$candidates_file"
+}
+
+encode_header_json() {
+    local hname="$1"
+    local hval="$2"
+    python3 -c 'import json, sys; print(json.dumps({sys.argv[1]: sys.argv[2]}, separators=(",", ":")))' "$hname" "$hval"
+}
+
+resolve_program_header() {
+    local target="$1"
+    local programs_dir="${2:-$PROGRAMS_DIR}"
+    if [ -n "${BB_RESEARCH_HEADER:-}" ]; then
+        local hname hval
+        hname="${BB_RESEARCH_HEADER%%:*}"
+        hval="${BB_RESEARCH_HEADER#*:}"
+        hname="$(printf '%s' "$hname" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        hval="$(printf '%s' "$hval" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -n "$hname" ] && [ -n "$hval" ] && printf '%s: %s\n' "$hname" "$hval"
+        return 0
+    fi
+
+    local result prog_file detected hname hval
+    if ! result=$(python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$target" 2>/dev/null); then
+        return 1
+    fi
+    prog_file="${result#*$'\t'}"
+    [ -f "$prog_file" ] || return 0
+
+    detected="$(grep -oiE '`[A-Za-z-]*[Rr]esearch[A-Za-z-]*:[[:space:]]*[^`]+`' "$prog_file" 2>/dev/null | head -n1 | tr -d '`')"
+    if [ -n "$detected" ]; then
+        hname="${detected%%:*}"
+        hval="${detected#*:}"
+        hname="$(printf '%s' "$hname" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        hval="$(printf '%s' "$hval" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -n "$hname" ] && [ -n "$hval" ] && printf '%s: %s\n' "$hname" "$hval"
     fi
 }
 

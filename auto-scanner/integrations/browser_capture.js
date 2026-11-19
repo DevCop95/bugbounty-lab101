@@ -32,6 +32,19 @@ const SENSITIVE_HEADERS = new Set([
   "x-auth-token",
 ]);
 
+const SENSITIVE_BODY_KEYS = new Set([
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "access_token",
+  "refresh_token",
+  "api_key",
+  "apikey",
+  "client_secret",
+  "authorization",
+]);
+
 function redactHeaders(headers, unredacted = false) {
   if (!headers || typeof headers !== "object") {
     return {};
@@ -45,6 +58,59 @@ function redactHeaders(headers, unredacted = false) {
     }
   }
   return out;
+}
+
+function redactJsonValue(val) {
+  if (Array.isArray(val)) {
+    return val.map(redactJsonValue);
+  }
+  if (val && typeof val === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (SENSITIVE_BODY_KEYS.has(String(k).toLowerCase())) {
+        out[k] = "[REDACTED]";
+      } else {
+        out[k] = redactJsonValue(v);
+      }
+    }
+    return out;
+  }
+  return val;
+}
+
+function redactPostData(postData, unredacted = false) {
+  if (!postData || typeof postData !== "string" || unredacted) {
+    return postData;
+  }
+  const trimmed = postData.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.stringify(redactJsonValue(JSON.parse(trimmed)));
+    } catch (e) {
+      /* fall through to key=value redaction */
+    }
+  }
+  if (trimmed.includes("=") && !trimmed.includes("\n") && (trimmed.includes("&") || /^[A-Za-z0-9_.~%-]+=/.test(trimmed))) {
+    try {
+      const params = new URLSearchParams(trimmed);
+      let touched = false;
+      for (const [k] of params.entries()) {
+        if (SENSITIVE_BODY_KEYS.has(k.toLowerCase())) {
+          params.set(k, "[REDACTED]");
+          touched = true;
+        }
+      }
+      if (touched) {
+        return params.toString();
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  return postData.replace(
+    /("(?:password|passwd|secret|token|access_token|refresh_token|api_key|apikey|client_secret|authorization)"\s*:\s*)"[^"]*"/gi,
+    '$1"[REDACTED]"'
+  );
 }
 
 async function main() {
@@ -103,7 +169,7 @@ async function main() {
         url: req.url(),
         resourceType: req.resourceType(),
         headers: redactHeaders(req.headers(), unredacted),
-        postData: safePostData(req),
+        postData: safePostData(req, unredacted),
         ts: Date.now(),
       });
     });
@@ -185,16 +251,30 @@ async function main() {
     { mode: 0o600 }
   );
 
+  // Unique HTTP(S) URLs for upstream scope filtering into recon artifacts.
+  const rawUrls = Array.from(
+    new Set(
+      requests
+        .filter((r) => r.phase === "request" && typeof r.url === "string" && /^https?:\/\//i.test(r.url))
+        .map((r) => r.url)
+    )
+  ).sort();
+  fs.writeFileSync(
+    path.join(outDir, "browser_urls_raw.txt"),
+    rawUrls.length ? rawUrls.join("\n") + "\n" : "",
+    { mode: 0o600 }
+  );
+
   console.error(
     `captured ${result.requestCount} requests, ${Object.keys(endpoints).length} distinct endpoints, ${result.websocketCount} websocket(s)` +
       (navError ? ` (nav warning: ${navError})` : "")
   );
 }
 
-function safePostData(req) {
+function safePostData(req, unredacted = false) {
   try {
     const d = req.postData();
-    return d ? truncate(d) : null;
+    return d ? truncate(redactPostData(d, unredacted)) : null;
   } catch (e) {
     return null;
   }
@@ -220,4 +300,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { redactHeaders, truncate };
+module.exports = { redactHeaders, redactPostData, truncate };

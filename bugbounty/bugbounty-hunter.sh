@@ -62,6 +62,28 @@ check_scope() {
     echo -e "${GREEN}[✓] Scope OK - $SCOPE_TARGET covered by $(basename "${result#*$'\t'}")${NC}"
 }
 
+state_dir_for() {
+    printf '%s/%s/.state\n' "$REPORTS_DIR" "$1"
+}
+
+phase_done() {
+    [ "${BB_RESUME:-0}" = "1" ] && [ -f "$(state_dir_for "$1")/$2.done" ]
+}
+
+mark_phase_done() {
+    local sdir
+    sdir="$(state_dir_for "$1")"
+    mkdir -p "$sdir"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$sdir/$2.done"
+}
+
+clear_state_dir() {
+    local sdir
+    sdir="$(state_dir_for "$1")"
+    [ -d "$sdir" ] && rm -rf -- "$sdir"
+    return 0
+}
+
 # ============================================
 # CREATE PROGRAM (scope tracker)
 # ============================================
@@ -87,8 +109,19 @@ new_program() {
     fi
 
     if [ -f "$TEMPLATE" ]; then
-        cp "$TEMPLATE" "$DEST"
-        sed -i "s/\[Program Name\]/$NAME/" "$DEST" 2>/dev/null
+        python3 - "$TEMPLATE" "$DEST" "$NAME" "$RESEARCHER" <<'PY'
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+src, dst, name, researcher = sys.argv[1:5]
+today = datetime.now(timezone.utc).date().isoformat()
+content = Path(src).read_text(encoding="utf-8")
+content = content.replace("[Program Name]", name)
+content = content.replace("[YYYY-MM-DD]", today)
+content = content.replace("| **Researcher** | dev101x |", f"| **Researcher** | {researcher} |")
+Path(dst).write_text(content, encoding="utf-8")
+PY
     else
         printf '# %s\n\n## In Scope\n- \n\n## Out of Scope\n- \n' "$NAME" > "$DEST"
     fi
@@ -188,13 +221,16 @@ reconnaissance() {
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/recon"
     local TARGET_REGEX="${TARGET//./\\.}"
     local RESEARCH_HEADER=""
+    local RATE_LIMIT
+    local CRT_DELAY="${BB_CRT_RETRY_DELAY:-3}"
     local -a hdr_args=()
     RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
     [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+    RATE_LIMIT="$(resolve_program_rate_limit "$TARGET" "$PROGRAMS_DIR")"
 
-    mkdir -p "$OUTPUT_DIR"
+    mkdir -p "$OUTPUT_DIR" "$OUTPUT_DIR/.baseline"
 
-    echo -e "${CYAN}[1/8] DEEP RECONNAISSANCE - $TARGET${NC}"
+    echo -e "${CYAN}[1/8] DEEP RECONNAISSANCE - $TARGET (rate-limit: ${RATE_LIMIT} req/s)${NC}"
 
     echo -e "${YELLOW}[1.1] Subdomain Enumeration${NC}"
     local RAW_SUBDOMAINS="$OUTPUT_DIR/subdomains_raw.txt"
@@ -221,10 +257,10 @@ reconnaissance() {
     if check_tool curl; then
         local crt_raw=""
         for _ in 1 2 3; do
-            crt_raw=$(curl -s -m 30 "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null || true)
+            crt_raw=$(curl -s -m 15 --connect-timeout 8 "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null || true)
             case "$crt_raw" in
                 "["*) break ;;              # looks like a JSON array → good
-                *) crt_raw=""; sleep 3 ;;   # 502/HTML/empty → retry
+                *) crt_raw=""; [ "$CRT_DELAY" -gt 0 ] 2>/dev/null && sleep "$CRT_DELAY" || true ;;
             esac
         done
         if [ -n "$crt_raw" ]; then
@@ -247,7 +283,7 @@ reconnaissance() {
         # than crt.sh, no API key needed for basic use. Covers crt.sh's gaps when
         # it 502s.
         local cs_raw
-        cs_raw=$(curl -s -m 30 "https://api.certspotter.com/v1/issuances?domain=${TARGET}&include_subdomains=true&expand=dns_names" 2>/dev/null || true)
+        cs_raw=$(curl -s -m 15 --connect-timeout 8 "https://api.certspotter.com/v1/issuances?domain=${TARGET}&include_subdomains=true&expand=dns_names" 2>/dev/null || true)
         case "$cs_raw" in
             "["*)
                 if check_tool jq; then
@@ -276,9 +312,15 @@ reconnaissance() {
     sort -u "$RAW_SUBDOMAINS" -o "$RAW_SUBDOMAINS"
     scope_filter_file "$RAW_SUBDOMAINS" "$OUTPUT_DIR/subdomains.txt"
     cp "$OUTPUT_DIR/subdomains.txt" "$OUTPUT_DIR/authorized_subdomains.txt"
+    python3 "$RECON_UTILS" diff-baseline \
+        "$OUTPUT_DIR/authorized_subdomains.txt" \
+        --baseline "$OUTPUT_DIR/.baseline/subdomains.txt" \
+        --new-out "$OUTPUT_DIR/new_subdomains.txt" || true
 
     SUBS=$(wc -l < "$OUTPUT_DIR/authorized_subdomains.txt")
-    echo -e "${GREEN}  ✓ $SUBS subdomains found${NC}"
+    local NEW_SUBS
+    NEW_SUBS=$(wc -l < "$OUTPUT_DIR/new_subdomains.txt" 2>/dev/null || echo 0)
+    echo -e "${GREEN}  ✓ $SUBS authorized subdomains (${NEW_SUBS} new since last baseline)${NC}"
 
     # BB_PASSIVE_ONLY=1 stops before any stage that touches the target directly
     # (httpx/katana). gau/waybackurls/crt.sh above are passive and still run.
@@ -286,6 +328,12 @@ reconnaissance() {
         echo -e "${YELLOW}  [passive-only] skipping httpx/katana (active stages)${NC}"
     else
         echo -e "${YELLOW}[1.2] HTTP probing${NC}"
+        local target_ip
+        target_ip="$(resolve_ip "$TARGET")"
+        if [ -n "$target_ip" ]; then
+            resolves_behind_cdn "$TARGET" "$target_ip" || true
+        fi
+
         # Guard: there are TWO different tools called 'httpx' — ProjectDiscovery's
         # recon httpx (what this pipeline needs) and the Python httpx HTTP-client
         # CLI. Only PD's accepts -silent; if the wrong one is installed, say so
@@ -299,9 +347,24 @@ reconnaissance() {
             # subdomain-takeover triage and per-asset tech fingerprinting.
             httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" \
                 "${hdr_args[@]}" \
+                -rl "$RATE_LIMIT" \
                 -td -title -server -cname -asn -status-code -json \
                 -o "$OUTPUT_DIR/httpx.json" -silent 2>/dev/null \
-                || httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" "${hdr_args[@]}" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null || true
+                || httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" "${hdr_args[@]}" -rl "$RATE_LIMIT" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null || true
+        fi
+
+        python3 "$RECON_UTILS" parse-httpx \
+            "$OUTPUT_DIR/httpx.json" \
+            --httpx-txt "$OUTPUT_DIR/httpx.txt" \
+            --live-out "$OUTPUT_DIR/live_urls.txt" \
+            --tech-out "$OUTPUT_DIR/technologies.txt" \
+            --takeover-out "$OUTPUT_DIR/takeover_candidates.txt" || true
+        python3 "$RECON_UTILS" diff-baseline \
+            "$OUTPUT_DIR/live_urls.txt" \
+            --baseline "$OUTPUT_DIR/.baseline/live_urls.txt" \
+            --new-out "$OUTPUT_DIR/new_live_urls.txt" || true
+        if [ -s "$OUTPUT_DIR/takeover_candidates.txt" ]; then
+            echo -e "${RED}  [!] Potential subdomain takeover CNAME candidates detected: $OUTPUT_DIR/takeover_candidates.txt${NC}"
         fi
     fi
 
@@ -329,6 +392,7 @@ reconnaissance() {
         if check_tool katana; then
             katana -u "https://$TARGET" -d 3 -jc \
                 "${hdr_args[@]}" \
+                -rl "$RATE_LIMIT" \
                 -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
                 -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null || true
         else
@@ -343,7 +407,7 @@ reconnaissance() {
         if check_tool jsluice && [ -s "$OUTPUT_DIR/js_files.txt" ] && check_tool curl; then
             while IFS= read -r jsurl; do
                 [ -n "$jsurl" ] || continue
-                curl -s "${hdr_args[@]}" "$jsurl" 2>/dev/null | jsluice urls 2>/dev/null || true
+                curl -s -m 15 --connect-timeout 8 "${hdr_args[@]}" "$jsurl" 2>/dev/null | jsluice urls 2>/dev/null || true
             done < "$OUTPUT_DIR/js_files.txt" | sort -u > "$OUTPUT_DIR/js_extracted_urls.txt" || true
         elif ! check_tool jsluice; then
             echo -e "${YELLOW}  [!] jsluice not installed; skipping JS URL extraction${NC}"
@@ -363,7 +427,7 @@ reconnaissance() {
         : > "$OUTPUT_DIR/api_specs.txt"
         if check_tool curl; then
             for sp in /swagger.json /openapi.json /v2/api-docs /v3/api-docs /api-docs /graphql /.well-known/openid-configuration; do
-                code=$(curl -s "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
+                code=$(curl -s -m 15 --connect-timeout 8 "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
                 [ "$code" = "200" ] && echo "https://${TARGET}${sp}  ($code)" >> "$OUTPUT_DIR/api_specs.txt"
             done
         fi
@@ -379,11 +443,18 @@ reconnaissance() {
         fi
     fi
 
-    echo -e "${YELLOW}[1.5] Parameter discovery${NC}"
-    if check_tool unfurl; then
-        grep "?" "$OUTPUT_DIR/wayback.txt" 2>/dev/null | unfurl keys 2>/dev/null | sort -u > "$OUTPUT_DIR/params.txt" || true
-    else
-        : > "$OUTPUT_DIR/params.txt"
+    echo -e "${YELLOW}[1.5] Parameter discovery & URL normalization${NC}"
+    python3 "$RECON_UTILS" clean-urls \
+        "$OUTPUT_DIR/wayback.txt" \
+        "$OUTPUT_DIR/js_endpoints.txt" \
+        "$OUTPUT_DIR/browser_urls_in_scope.txt" \
+        --out "$OUTPUT_DIR/clean_urls.txt" \
+        --params-out "$OUTPUT_DIR/params.txt" \
+        --buckets-dir "$OUTPUT_DIR" || true
+
+    if check_tool unfurl && [ -s "$OUTPUT_DIR/wayback.txt" ]; then
+        { cat "$OUTPUT_DIR/params.txt"; grep "?" "$OUTPUT_DIR/wayback.txt" 2>/dev/null | unfurl keys 2>/dev/null || true; } \
+            | grep -v '^$' | sort -u > "$OUTPUT_DIR/params.tmp" && mv "$OUTPUT_DIR/params.tmp" "$OUTPUT_DIR/params.txt"
     fi
     # Active param mining (optional tools, skipped in passive-only).
     if [ -z "${BB_PASSIVE_ONLY:-}" ]; then
@@ -406,33 +477,46 @@ vuln_scan() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/vulns"
     local RESEARCH_HEADER=""
+    local RATE_LIMIT
     local -a hdr_args=()
     RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
     [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+    RATE_LIMIT="$(resolve_program_rate_limit "$TARGET" "$PROGRAMS_DIR")"
 
     mkdir -p "$OUTPUT_DIR"
 
-    echo -e "${CYAN}[2/8] VULNERABILITY SCANNING${NC}"
+    echo -e "${CYAN}[2/8] VULNERABILITY SCANNING (rate-limit: ${RATE_LIMIT} req/s)${NC}"
+
+    local nuclei_targets="$OUTPUT_DIR/nuclei_targets.txt"
+    if [ -s "$OUTPUT_DIR/../recon/live_urls.txt" ]; then
+        cp "$OUTPUT_DIR/../recon/live_urls.txt" "$nuclei_targets"
+    else
+        printf 'https://%s\n' "$TARGET" > "$nuclei_targets"
+    fi
 
     if check_tool nuclei; then
         echo -e "${YELLOW}[2.1] Nuclei scan${NC}"
-        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -severity critical,high,medium -o "$OUTPUT_DIR/nuclei.txt" -silent 2>/dev/null || true
+        nuclei -l "$nuclei_targets" "${hdr_args[@]}" -rl "$RATE_LIMIT" -severity critical,high,medium -o "$OUTPUT_DIR/nuclei.txt" -silent 2>/dev/null || true
 
         echo -e "${YELLOW}[2.2] CORS misconfiguration${NC}"
-        nuclei -u "https://$TARGET" "${hdr_args[@]}" -t nuclei-templates/http/misconfiguration/cors* -o "$OUTPUT_DIR/cors.txt" -silent 2>/dev/null || true
+        nuclei -l "$nuclei_targets" "${hdr_args[@]}" -rl "$RATE_LIMIT" -tags cors -o "$OUTPUT_DIR/cors.txt" -silent 2>/dev/null || true
     else
         echo -e "${YELLOW}  [!] nuclei not installed; skipping template scans${NC}"
     fi
 
     echo -e "${YELLOW}[2.3] XSS detection${NC}"
+    local xss_raw="$OUTPUT_DIR/xss_candidates_raw.txt"
     local xss_candidates="$OUTPUT_DIR/xss_candidates.txt"
-    : > "$xss_candidates"
+    : > "$xss_raw"
+    [ -s "$OUTPUT_DIR/../recon/candidates_xss.txt" ] && cat "$OUTPUT_DIR/../recon/candidates_xss.txt" >> "$xss_raw"
     if [ -s "$OUTPUT_DIR/../recon/params.txt" ]; then
         while IFS= read -r param; do
+            param="${param%$'\r'}"
             [ -n "$param" ] || continue
-            printf 'https://%s/?%s=test\n' "$TARGET" "$param" >> "$xss_candidates"
+            printf 'https://%s/?%s=test\n' "$TARGET" "$param" >> "$xss_raw"
         done < <(head -n 100 "$OUTPUT_DIR/../recon/params.txt")
     fi
+    awk 'NF && !seen[$0]++' "$xss_raw" | head -n 100 > "$xss_candidates"
     if [ -s "$xss_candidates" ] && check_tool dalfox; then
         dalfox pipe --silence "${hdr_args[@]}" -o "$OUTPUT_DIR/xss.txt" < "$xss_candidates" 2>/dev/null || true
     elif ! check_tool dalfox; then
@@ -442,7 +526,11 @@ vuln_scan() {
     echo -e "${YELLOW}[2.4] SQL Injection${NC}"
     local sqlmap_targets="$OUTPUT_DIR/sqlmap_targets.txt"
     : > "$sqlmap_targets"
-    if [ -s "$OUTPUT_DIR/../recon/wayback.txt" ]; then
+    if [ -s "$OUTPUT_DIR/../recon/candidates_sqli.txt" ]; then
+        head -n 50 "$OUTPUT_DIR/../recon/candidates_sqli.txt" > "$sqlmap_targets" || true
+    elif [ -s "$OUTPUT_DIR/../recon/clean_urls.txt" ]; then
+        grep "=" "$OUTPUT_DIR/../recon/clean_urls.txt" 2>/dev/null | head -n 50 > "$sqlmap_targets" || true
+    elif [ -s "$OUTPUT_DIR/../recon/wayback.txt" ]; then
         grep "=" "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null | head -n 50 > "$sqlmap_targets" || true
     fi
     if [ -s "$sqlmap_targets" ] && check_tool sqlmap; then
@@ -453,13 +541,13 @@ vuln_scan() {
 
     if check_tool nuclei; then
         echo -e "${YELLOW}[2.5] SSRF detection${NC}"
-        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/ssrf* -o "$OUTPUT_DIR/ssrf.txt" -silent 2>/dev/null || true
+        nuclei -l "$nuclei_targets" "${hdr_args[@]}" -rl "$RATE_LIMIT" -tags ssrf -o "$OUTPUT_DIR/ssrf.txt" -silent 2>/dev/null || true
 
         echo -e "${YELLOW}[2.6] Open redirect${NC}"
-        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/redirect* -o "$OUTPUT_DIR/redirect.txt" -silent 2>/dev/null || true
+        nuclei -l "$nuclei_targets" "${hdr_args[@]}" -rl "$RATE_LIMIT" -tags redirect -o "$OUTPUT_DIR/redirect.txt" -silent 2>/dev/null || true
 
         echo -e "${YELLOW}[2.7] IDOR detection${NC}"
-        nuclei -u "https://$TARGET" "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/idor* -o "$OUTPUT_DIR/idor.txt" -silent 2>/dev/null || true
+        nuclei -l "$nuclei_targets" "${hdr_args[@]}" -rl "$RATE_LIMIT" -tags idor -o "$OUTPUT_DIR/idor.txt" -silent 2>/dev/null || true
     fi
 
     echo -e "${GREEN}[✓] Vulnerability scanning completed${NC}"
@@ -474,13 +562,15 @@ advanced_bruteforce() {
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/brute"
     local SECLISTS_BASE="${SECLISTS_DIR:-/usr/share/wordlists/seclists}"
     local RESEARCH_HEADER=""
+    local RATE_LIMIT
     local -a hdr_args=()
     RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
     [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+    RATE_LIMIT="$(resolve_program_rate_limit "$TARGET" "$PROGRAMS_DIR")"
 
     mkdir -p "$OUTPUT_DIR"
 
-    echo -e "${CYAN}[3/8] ADVANCED BRUTE FORCE${NC}"
+    echo -e "${CYAN}[3/8] ADVANCED BRUTE FORCE (rate-limit: ${RATE_LIMIT} req/s)${NC}"
 
     local wl_dirs="$SECLISTS_BASE/Discovery/Web-Content/raft-large-directories.txt"
     local wl_vhosts="$SECLISTS_BASE/Discovery/DNS/subdomains-top1million-5000.txt"
@@ -488,21 +578,21 @@ advanced_bruteforce() {
 
     echo -e "${YELLOW}[3.1] Directory fuzzing${NC}"
     if check_tool feroxbuster && [ -f "$wl_dirs" ]; then
-        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" -w "$wl_dirs" -o "$OUTPUT_DIR/dirs.txt" -q 2>/dev/null || true
+        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" --rate-limit "$RATE_LIMIT" -w "$wl_dirs" -o "$OUTPUT_DIR/dirs.txt" -q 2>/dev/null || true
     else
         echo -e "${YELLOW}  [!] feroxbuster or wordlist missing; skipping directory fuzzing${NC}"
     fi
 
     echo -e "${YELLOW}[3.2] VHost fuzzing${NC}"
     if check_tool feroxbuster && [ -f "$wl_vhosts" ]; then
-        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" -w "$wl_vhosts" --vhosts -o "$OUTPUT_DIR/vhosts.txt" -q 2>/dev/null || true
+        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" --rate-limit "$RATE_LIMIT" -w "$wl_vhosts" --vhosts -o "$OUTPUT_DIR/vhosts.txt" -q 2>/dev/null || true
     else
         echo -e "${YELLOW}  [!] feroxbuster or wordlist missing; skipping vhost fuzzing${NC}"
     fi
 
     echo -e "${YELLOW}[3.3] Parameter fuzzing${NC}"
     if check_tool ffuf && [ -f "$wl_common" ]; then
-        ffuf -u "https://$TARGET/FUZZ" "${hdr_args[@]}" -w "$wl_common" -o "$OUTPUT_DIR/ffuf.txt" -q 2>/dev/null || true
+        ffuf -u "https://$TARGET/FUZZ" "${hdr_args[@]}" -rate "$RATE_LIMIT" -w "$wl_common" -o "$OUTPUT_DIR/ffuf.txt" -q 2>/dev/null || true
     else
         echo -e "${YELLOW}  [!] ffuf or wordlist missing; skipping parameter fuzzing${NC}"
     fi
@@ -527,11 +617,26 @@ secrets_hunting() {
     echo -e "${CYAN}[4/8] SECRET HUNTING${NC}"
 
     echo -e "${YELLOW}[4.1] JS secrets${NC}"
-    if [ -s "$OUTPUT_DIR/../recon/js_endpoints.txt" ] && check_tool curl; then
-        while IFS= read -r url; do
-            [ -n "$url" ] || continue
-            curl -s "${hdr_args[@]}" "$url" 2>/dev/null | grep -iE "(api_key|apikey|secret|token|password|aws|azure|gcp|firebase)" >> "$OUTPUT_DIR/js_secrets.txt" || true
-        done < "$OUTPUT_DIR/../recon/js_endpoints.txt"
+    if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
+        echo -e "${YELLOW}  [passive-only] skipping active JS file fetching${NC}"
+    else
+        local js_list=""
+        if [ -s "$OUTPUT_DIR/../recon/js_files.txt" ]; then
+            js_list="$OUTPUT_DIR/../recon/js_files.txt"
+        elif [ -s "$OUTPUT_DIR/../recon/js_endpoints.txt" ]; then
+            js_list="$OUTPUT_DIR/js_files_fallback.txt"
+            grep -iE '\.js(\?|$)' "$OUTPUT_DIR/../recon/js_endpoints.txt" 2>/dev/null | sort -u > "$js_list" || true
+        fi
+        if [ -n "$js_list" ] && [ -s "$js_list" ] && check_tool curl; then
+            : > "$OUTPUT_DIR/js_secrets.txt"
+            while IFS= read -r url; do
+                url="${url%$'\r'}"
+                [ -n "$url" ] || continue
+                curl -s -m 15 --connect-timeout 8 "${hdr_args[@]}" "$url" 2>/dev/null \
+                    | grep -iE "(api_key|apikey|secret|token|password|aws|azure|gcp|firebase)" \
+                    | awk -v u="$url" '{print "[" u "] " $0}' >> "$OUTPUT_DIR/js_secrets.txt" || true
+            done < "$js_list"
+        fi
     fi
 
     echo -e "${YELLOW}[4.2] GitHub dorking${NC}"
@@ -588,7 +693,10 @@ api_testing() {
     echo -e "${CYAN}[6/8] API TESTING${NC}"
 
     echo -e "${YELLOW}[6.1] API endpoint discovery${NC}"
-    grep -iE "(api|v1|v2|v3|graphql|rest)" "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null > "$OUTPUT_DIR/api_endpoints.txt" || true
+    {
+        [ -s "$OUTPUT_DIR/../recon/clean_urls.txt" ] && grep -iE "(api|v1|v2|v3|graphql|rest)" "$OUTPUT_DIR/../recon/clean_urls.txt" 2>/dev/null || true
+        [ -s "$OUTPUT_DIR/../recon/wayback.txt" ] && grep -iE "(api|v1|v2|v3|graphql|rest)" "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null || true
+    } | sort -u > "$OUTPUT_DIR/api_endpoints.txt" || true
 
     if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
         echo -e "${YELLOW}  [passive-only] skipping active API documentation and GraphQL probes${NC}"
@@ -601,12 +709,12 @@ api_testing() {
     if check_tool curl; then
         local path status slug out_doc
         for path in /swagger.json /openapi.json /api-docs /swagger-ui.html /graphql; do
-            status=$(curl -s "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://$TARGET$path" 2>/dev/null || echo "000")
+            status=$(curl -s -m 15 --connect-timeout 8 "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://$TARGET$path" 2>/dev/null || echo "000")
             if [ "$status" = "200" ]; then
                 echo -e "${GREEN}  ✓ API documentation found: $path${NC}"
                 slug=$(printf '%s' "${path#/}" | tr '/.' '__')
                 out_doc="$OUTPUT_DIR/doc_${slug}"
-                curl -s "${hdr_args[@]}" "https://$TARGET$path" > "$out_doc" 2>/dev/null || true
+                curl -s -m 15 --connect-timeout 8 "${hdr_args[@]}" "https://$TARGET$path" > "$out_doc" 2>/dev/null || true
                 found_records+="${path}"$'\t'"${status}"$'\t'"${out_doc}"$'\n'
             fi
         done
@@ -626,7 +734,7 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
 
     echo -e "${YELLOW}[6.3] GraphQL introspection${NC}"
     if check_tool curl; then
-        curl -s -X POST "https://$TARGET/graphql" "${hdr_args[@]}" -H "Content-Type: application/json" -d '{"query":"{__schema{types{name,fields{name}}}}"}' > "$OUTPUT_DIR/graphql_schema.json" 2>/dev/null || true
+        curl -s -m 15 --connect-timeout 8 -X POST "https://$TARGET/graphql" "${hdr_args[@]}" -H "Content-Type: application/json" -d '{"query":"{__schema{types{name,fields{name}}}}"}' > "$OUTPUT_DIR/graphql_schema.json" 2>/dev/null || true
     fi
 
     echo -e "${GREEN}[✓] API testing completed${NC}"
@@ -660,69 +768,27 @@ chain_attacks() {
 generate_report() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET"
-    local REPORT_FILE
+    local REPORT_FILE policy_json prog_name platform
     REPORT_FILE="$OUTPUT_DIR/report-$(date +%Y%m%d).md"
 
     mkdir -p "$OUTPUT_DIR"
     echo -e "${CYAN}[8/8] REPORT GENERATION${NC}"
 
-    cat > "$REPORT_FILE" <<EOF
-# Bug Bounty Report
+    prog_name=""
+    platform="HackerOne"
+    if policy_json=$(python3 "$SCOPE_GUARD" --programs-dir "$PROGRAMS_DIR" --policy-json "$TARGET" 2>/dev/null); then
+        prog_name=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("program_name") or "")' "$policy_json" 2>/dev/null || true)
+        platform=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("platform") or "HackerOne")' "$policy_json" 2>/dev/null || echo "HackerOne")
+    fi
 
-## Platform
-HackerOne
-
-## Program
-[H1 program name]
-
-## Researcher
-${RESEARCHER}
-
-## Target
-${TARGET}
-
-## Date
-$(date -Iseconds)
-
-## H1 Report URL
-[Filled after submission - hackerone.com/reports/xxxxx]
-
-## Executive Summary
-[Brief description of the finding]
-
-## Vulnerability Details
-
-### Type
-[SQLi/XSS/SSRF/IDOR/etc.]
-
-### Severity
-[HIGH/MEDIUM/LOW]
-
-### CVSS Score
-[Score]
-
-### CWE
-[CWE-XXX]
-
-## Steps to Reproduce
-
-1. Step 1
-2. Step 2
-3. Step 3
-
-## Impact
-[Description of potential impact]
-
-## Remediation
-[Suggested fix]
-
-## References
-- [CWE Link]
-- [OWASP Link]
-
-## Appendix
-[Screenshots, logs, PoC code]
-EOF
+    python3 "$RECON_UTILS" build-report \
+        --template "$BUGBOUNTY_DIR/templates/report-template.md" \
+        --output "$REPORT_FILE" \
+        --target "$TARGET" \
+        --reports-dir "$OUTPUT_DIR" \
+        --researcher "$RESEARCHER" \
+        --program "$prog_name" \
+        --platform "$platform"
 
     echo -e "${GREEN}[✓] Report generated: $REPORT_FILE${NC}"
 }
@@ -951,30 +1017,138 @@ encoding_bypass() {
 # MAIN
 # ============================================
 
-# Handle --help and --version before banner
+# Handle --help and --version before flag stripping when used as first arg
 case "${1:-}" in
     --version|-V)
         echo "bugbounty-hunter ${BB_VERSION}"
         exit 0
         ;;
     --help|-h)
-        ;& # fall through to help
+        set -- help
+        ;;
 esac
 
-print_banner
-
-# Global flag: --passive-only (anywhere on the line) disables stages that touch
-# the target directly (httpx/katana/param-mining). Passive sources still run.
-for _arg in "$@"; do
-    [ "$_arg" = "--passive-only" ] && export BB_PASSIVE_ONLY=1
+BB_RESUME="${BB_RESUME:-0}"
+BB_FRESH="${BB_FRESH:-0}"
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --passive-only)
+            export BB_PASSIVE_ONLY=1
+            shift
+            ;;
+        --resume)
+            BB_RESUME=1
+            shift
+            ;;
+        --fresh)
+            BB_FRESH=1
+            shift
+            ;;
+        --rate-limit=*)
+            _rl_val="${1#*=}"
+            if [[ ! "$_rl_val" =~ ^[1-9][0-9]*$ ]]; then
+                echo -e "${RED}[!] --rate-limit requires a positive integer${NC}" >&2
+                exit 1
+            fi
+            export BB_RATE_LIMIT="$_rl_val"
+            shift
+            ;;
+        --rate-limit)
+            if [ $# -lt 2 ] || [[ ! "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+                echo -e "${RED}[!] --rate-limit requires a positive integer${NC}" >&2
+                exit 1
+            fi
+            export BB_RATE_LIMIT="$2"
+            shift 2
+            ;;
+        --version|-V)
+            echo "bugbounty-hunter ${BB_VERSION}"
+            exit 0
+            ;;
+        --help|-h)
+            POSITIONAL=(help)
+            break
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
 done
+if [ "${#POSITIONAL[@]}" -gt 0 ]; then
+    set -- "${POSITIONAL[@]}"
+else
+    set --
+fi
+
+print_banner
 
 case "${1:-help}" in
     new)
         new_program "${2:-}"
         ;;
     scope)
-        check_scope "${2:-}"
+        check_scope "${2:-}" || exit 1
+        _rl_summary="$(resolve_program_rate_limit "$SCOPE_TARGET" "$PROGRAMS_DIR")"
+        _hdr_summary="$(resolve_program_header "$SCOPE_TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)"
+        echo -e "${GREEN}    Policy: rate-limit=${_rl_summary} req/s | header=${_hdr_summary:-none}${NC}"
+        ;;
+    scope-explain)
+        if [ -z "${2:-}" ]; then
+            echo -e "${RED}Usage: $0 scope-explain <target>${NC}" >&2
+            exit 1
+        fi
+        python3 "$SCOPE_GUARD" --programs-dir "$PROGRAMS_DIR" --explain "$2"
+        ;;
+    scope-audit)
+        python3 "$SCOPE_GUARD" --programs-dir "$PROGRAMS_DIR" --audit
+        ;;
+    scope-export)
+        _exp_fmt="${2:-}"
+        if [ -z "$_exp_fmt" ]; then
+            echo -e "${RED}Usage: $0 scope-export <burp|json|txt|domains|wildcards|cidrs> [program] [output]${NC}" >&2
+            exit 1
+        fi
+        _exp_args=(--programs-dir "$PROGRAMS_DIR" --export "$_exp_fmt")
+        [ -n "${3:-}" ] && _exp_args+=(--program "$3")
+        [ -n "${4:-}" ] && _exp_args+=(--output "$4")
+        python3 "$SCOPE_GUARD" "${_exp_args[@]}"
+        ;;
+    scope-import)
+        _imp_src="${2:-}"
+        _imp_prog="${3:-}"
+        if [ -z "$_imp_src" ] || [ -z "$_imp_prog" ]; then
+            echo -e "${RED}Usage: $0 scope-import <file.csv|file.json|file.txt> <program-name>${NC}" >&2
+            exit 1
+        fi
+        if [ ! -f "$_imp_src" ]; then
+            echo -e "${RED}[!] File not found: $_imp_src${NC}" >&2
+            exit 1
+        fi
+        if [[ ! "$_imp_prog" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
+            echo -e "${RED}[!] Program name may only contain letters, numbers, dots, underscores, and hyphens.${NC}" >&2
+            exit 1
+        fi
+        _imp_dest="$PROGRAMS_DIR/${_imp_prog}.md"
+        if [ -e "$_imp_dest" ]; then
+            echo -e "${YELLOW}[!] Already exists (refusing overwrite): $_imp_dest${NC}" >&2
+            exit 1
+        fi
+        case "${_imp_src,,}" in
+            *.csv)  _imp_flag="--import-h1-csv" ;;
+            *.json) _imp_flag="--import-json" ;;
+            *)      _imp_flag="--import-txt" ;;
+        esac
+        python3 "$SCOPE_GUARD" "$_imp_flag" "$_imp_src" --program-name "$_imp_prog" --researcher "$RESEARCHER" --output "$_imp_dest" || exit 1
+        echo -e "${GREEN}[✓] Program imported: $_imp_dest${NC}"
+        ;;
+    scope-diff)
+        if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+            echo -e "${RED}Usage: $0 scope-diff <old-file> <new-file>${NC}" >&2
+            exit 1
+        fi
+        python3 "$SCOPE_GUARD" --diff "$2" "$3"
         ;;
     resolve)
         check_scope "${2:-}" || exit 1
@@ -982,27 +1156,34 @@ case "${1:-help}" in
         ;;
     recon)
         check_scope "${2:-}" || exit 1
+        [ "$BB_FRESH" = "1" ] && clear_state_dir "$SCOPE_TARGET"
         reconnaissance "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "recon"
         ;;
     vuln)
         check_scope "${2:-}" || exit 1
         vuln_scan "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "vuln"
         ;;
     brute)
         check_scope "${2:-}" || exit 1
         advanced_bruteforce "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "brute"
         ;;
     secrets)
         check_scope "${2:-}" || exit 1
         secrets_hunting "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "secrets"
         ;;
     api)
         check_scope "${2:-}" || exit 1
         api_testing "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "api"
         ;;
     report)
         check_scope "${2:-}" || exit 1
         generate_report "$SCOPE_TARGET"
+        mark_phase_done "$SCOPE_TARGET" "report"
         ;;
     platforms)
         show_platforms
@@ -1020,36 +1201,56 @@ case "${1:-help}" in
             exit 1
         fi
         check_scope "$TARGET" || exit 1
-        reconnaissance "$SCOPE_TARGET"
-        vuln_scan "$SCOPE_TARGET"
-        advanced_bruteforce "$SCOPE_TARGET"
-        secrets_hunting "$SCOPE_TARGET"
-        api_testing "$SCOPE_TARGET"
-        business_logic "$SCOPE_TARGET"
-        chain_attacks "$SCOPE_TARGET"
-        generate_report "$SCOPE_TARGET"
+        [ "$BB_FRESH" = "1" ] && clear_state_dir "$SCOPE_TARGET"
+        for _phase_pair in \
+            "recon:reconnaissance" \
+            "vuln:vuln_scan" \
+            "brute:advanced_bruteforce" \
+            "secrets:secrets_hunting" \
+            "api:api_testing" \
+            "business:business_logic" \
+            "chains:chain_attacks" \
+            "report:generate_report"; do
+            _pname="${_phase_pair%%:*}"
+            _pfunc="${_phase_pair#*:}"
+            if phase_done "$SCOPE_TARGET" "$_pname"; then
+                log_warning "Skipping phase '$_pname' (checkpoint present; pass --fresh to re-run)"
+            else
+                if "$_pfunc" "$SCOPE_TARGET"; then
+                    mark_phase_done "$SCOPE_TARGET" "$_pname"
+                fi
+            fi
+        done
         ;;
     *)
         echo ""
-        echo "Usage: $0 <command> [target]"
+        echo "Usage: $0 <command> [target] [flags]"
         echo ""
         echo "Commands:"
-        echo "  new <program>     - Create scope file for an H1 program"
-        echo "  scope <domain>    - Check if a target is in scope"
-        echo "  resolve <host>    - Detect DNS hijack/blocking (local vs 8.8.8.8)"
-        echo "  full <domain>     - Complete pipeline (recon->report)"
-        echo "  recon <domain>    - Reconnaissance only"
-        echo "  vuln <domain>     - Vulnerabilities only"
-        echo "  brute <domain>    - Brute force only"
-        echo "  secrets <domain>  - Secrets only"
-        echo "  api <domain>      - APIs only"
-        echo "  encode <domain>   - Encoding bypass techniques"
-        echo "  report <domain>   - Generate report"
-        echo "  platforms         - View platforms"
-        echo "  zeroday           - 0-day methodology"
+        echo "  new <program>                    - Create scope file for a program"
+        echo "  scope <target>                   - Check if a target is in scope (+ policy)"
+        echo "  scope-explain <target>           - Show detailed scope verdict and policy rules"
+        echo "  scope-audit                      - Audit all programs/*.md for conflicts & freshness"
+        echo "  scope-export <fmt> [prog] [out]  - Export scope (burp|json|txt|domains|wildcards|cidrs)"
+        echo "  scope-import <file> <prog>       - Import H1 CSV / JSON / TXT into programs/<prog>.md"
+        echo "  scope-diff <old> <new>           - Diff two scope files (.md/.csv/.json/.txt)"
+        echo "  resolve <host>                   - Detect DNS hijack/blocking (local vs 8.8.8.8)"
+        echo "  full <domain>                    - Complete pipeline (recon->report)"
+        echo "  recon <domain>                   - Reconnaissance only"
+        echo "  vuln <domain>                    - Vulnerabilities only"
+        echo "  brute <domain>                   - Brute force only"
+        echo "  secrets <domain>                 - Secrets only"
+        echo "  api <domain>                     - APIs only"
+        echo "  encode <domain>                  - Encoding bypass techniques"
+        echo "  report <domain>                  - Generate report with telemetry summary"
+        echo "  platforms                        - View platforms"
+        echo "  zeroday                          - 0-day methodology"
         echo ""
         echo "Flags:"
-        echo "  --passive-only    - skip stages that touch the target (httpx/katana/param-mining)"
+        echo "  --passive-only                   - Skip stages that touch the target directly"
+        echo "  --resume                         - Skip completed phases in full mode (.state/*.done)"
+        echo "  --fresh                          - Clear previous phase checkpoints before running"
+        echo "  --rate-limit <req/s>             - Override max request rate for active tools"
         echo ""
         echo "Current researcher: $RESEARCHER (change with BB_RESEARCHER=handle)"
         echo "Scope tracker: $PROGRAMS_DIR"

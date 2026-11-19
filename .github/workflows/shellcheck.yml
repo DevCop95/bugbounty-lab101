@@ -58,13 +58,24 @@ jobs:
           node --check auto-scanner/integrations/browser_capture.js
           node -e '
             const assert = require("assert");
-            const { redactHeaders } = require("./auto-scanner/integrations/browser_capture.js");
-            const out = redactHeaders({ Authorization: "Bearer tok", Cookie: "a=1", "X-Other": "ok" });
+            const { redactHeaders, redactPostData } = require("./auto-scanner/integrations/browser_capture.js");
+            const out = redactHeaders({ Authorization: "Bearer dummy-tok", Cookie: "a=1", "X-Other": "ok" });
             assert.strictEqual(out.Authorization, "[REDACTED]");
             assert.strictEqual(out.Cookie, "[REDACTED]");
             assert.strictEqual(out["X-Other"], "ok");
-            const raw = redactHeaders({ Authorization: "Bearer tok" }, true);
-            assert.strictEqual(raw.Authorization, "Bearer tok");
+            const raw = redactHeaders({ Authorization: "Bearer dummy-tok" }, true);
+            assert.strictEqual(raw.Authorization, "Bearer dummy-tok");
+
+            const jsonRedacted = JSON.parse(redactPostData(JSON.stringify({ user: "alice", password: "dummy-password", nested: { access_token: "dummy-at" } })));
+            assert.strictEqual(jsonRedacted.user, "alice");
+            assert.strictEqual(jsonRedacted.password, "[REDACTED]");
+            assert.strictEqual(jsonRedacted.nested.access_token, "[REDACTED]");
+
+            const formRedacted = redactPostData("user=alice&api_key=dummy-val");
+            assert(formRedacted.includes("user=alice") && formRedacted.includes("api_key=%5BREDACTED%5D"), formRedacted);
+
+            const bodyRaw = "{\"password\":\"dummy-password\"}";
+            assert.strictEqual(redactPostData(bodyRaw, true), bodyRaw);
             console.log("browser_capture.js unit assertions passed.");
           '
           echo "All syntax and JS checks passed."

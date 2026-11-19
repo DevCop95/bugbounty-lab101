@@ -23,14 +23,15 @@ scope, not duplicating reports, and submitting something a triager will accept q
 ```bash
 cd bugbounty
 ./bugbounty-hunter.sh new program-name
+# Or import directly from HackerOne CSV / JSON / TXT:
+./bugbounty-hunter.sh scope-import h1-scope.csv program-name
 ```
 
-This creates `programs/program-name.md`. Copy the "In scope" and "Out of scope" sections
-from the program's policy there, verbatim — not a summary from memory.
+This creates `programs/program-name.md`. Copy the "In scope", "Out of scope", and "Special Rules" (rate limits, required identification headers) from the program's policy there, verbatim — not a summary from memory.
 `bugbounty-hunter.sh` blocks any active phase (`recon`, `vuln`, `brute`, `secrets`, `api`, `full`)
-against a target not documented in `programs/`. See [`programs/README.md`](../programs/README.md).
+against a target not documented in an **Active** file in `programs/`. Use `scope-explain <target>`, `scope-audit`, `scope-diff <old> <new>`, and `scope-export burp <prog> burp.json` to inspect, verify freshness, and sync with Burp Suite. See [`programs/README.md`](../programs/README.md).
 
-Re-check the scope if you return to a program after several weeks — scopes change.
+Re-check the scope if you return to a program after several weeks (`scope-audit` warns after 30 days by default) — scopes change.
 
 ## 3. Scanning methodology
 

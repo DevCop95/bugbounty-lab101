@@ -13,13 +13,16 @@
 
 - main-domain.com
 - *.api.main-domain.com
-- app.main-domain.com
+- staging-*.main-domain.com
+- app.main-domain.com:8443
+- https://app.main-domain.com/api/*
 - 192.0.2.0/24
 
 ## Out of Scope
 
 - thirdparty.main-domain.com (external provider, out of policy)
 - staging.main-domain.com
+- https://app.main-domain.com/api/logout*
 
 ## Excluded Vulnerability Types
 
@@ -27,7 +30,7 @@
 
 ## Special Rules
 
-- [Rate limits, allowed testing windows, provided test accounts, prohibition of destructive testing, etc.]
+- [Rate limits (e.g. N req/s), required identification headers (backticked in this section per programs/README.md), allowed testing windows, provided test accounts, prohibition of destructive testing, etc.]
 
 ## Reference Rewards
 

@@ -94,7 +94,7 @@ while IFS= read -r token; do
             cve=$(echo "$line" | cut -f1)
             desc=$(echo "$line" | cut -f2-)
             echo -e "${RED}  [KEV] $cve${NC}  ($token) — $desc"
-            ALERT_LINES="${ALERT_LINES}\n$cve ($token) — $desc"
+            ALERT_LINES="${ALERT_LINES}"$'\n'"$cve ($token) — $desc"
             MATCHES=$((MATCHES + 1))
         done <<<"$results"
     fi
@@ -110,8 +110,10 @@ echo -e "${YELLOW}Tip: add EPSS with  curl -s 'https://api.first.org/data/v1/eps
 
 # ── Optional webhook alert ───────────────────────────────────────────
 if [ -n "${WEBHOOK_URL:-}" ]; then
-    payload=$(printf '{"text":"KEV match (%s): %b"}' "$MATCHES" "$ALERT_LINES")
-    curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1 \
-        && echo -e "${GREEN}Alert posted to webhook.${NC}" \
-        || echo -e "${YELLOW}Webhook post failed.${NC}"
+    payload=$(jq -n --arg text "KEV match (${MATCHES}):${ALERT_LINES}" '{text: $text}')
+    if curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1; then
+        echo -e "${GREEN}Alert posted to webhook.${NC}"
+    else
+        echo -e "${YELLOW}Webhook post failed.${NC}"
+    fi
 fi

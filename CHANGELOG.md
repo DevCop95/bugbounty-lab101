@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-11-19
+
+### Added
+- **Scope Engine v2 (`scripts/scope_guard.py`)**:
+  - Path-scoped URL rules with boundary safety (`/admin` matches `/admin/...` not `/administrator`), `/*`, and prefix `*` globs.
+  - Explicit port scoping (`host:port`, `https://host:port/path`) and label-glob wildcards (`staging-*.example.com`, `*.api-*.example.com`).
+  - Program status enforcement (`Paused`, `Retired`, `Closed`, `Inactive`, `Archived` programs no longer authorize targets while keeping global `Out of Scope` blocks active) plus staleness warnings controlled by `BB_SCOPE_MAX_AGE_DAYS` (default `30`).
+  - Policy metadata extraction (research headers including `X-Security-Testing` / `X-Bug-Bounty` / `X-HackerOne-Research` and rate-limit directives from `## Special Rules`).
+  - CLI operations & `bugbounty-hunter.sh` subcommands: `scope-explain`, `scope-audit`, `scope-export` (`burp` `advanced_mode` JSON, `json`, `txt`, `domains`, `wildcards`, `cidrs`), `scope-import` (HackerOne CSV, `bounty-targets-data`/platform JSON, TXT), and `scope-diff`.
+- **Recon & Reporting Utilities (`scripts/recon_utils.py`)**:
+  - `parse-httpx`: converts `httpx.json` (or `httpx.txt`) into `live_urls.txt`, `technologies.txt`, and cloud/SaaS `takeover_candidates.txt`.
+  - `clean-urls`: strips static asset noise (preserving `.js`), deduplicates URLs by `(scheme, host, path, sorted params)`, extracts parameter names, and produces `gf`-style `candidates_{xss,sqli,ssrf_redirect,lfi,idor}.txt`.
+  - `diff-baseline`: diffs subdomains and live URLs against `.baseline/` history to emit `new_subdomains.txt` and `new_live_urls.txt`.
+  - `build-report`: renders `bugbounty/templates/report-template.md` with resolved program metadata and an automated `Recon & Scan Telemetry Summary` table.
+- **Resumable & Rate-Limited Pipeline (`bugbounty/bugbounty-hunter.sh`, `auto-scanner/lib/common.sh`)**:
+  - Added `--resume`, `--fresh`, and `--rate-limit <N>` flags parsed at any CLI position alongside `--passive-only`.
+  - Enforced resolved per-program or default (`10 req/s`) rate limits across `httpx`, `katana`, `nuclei`, `feroxbuster`, and `ffuf`, and HTTP connect/max timeouts across `curl` probes.
+  - Connected recon artifacts (`live_urls.txt`, `candidates_xss.txt`, `candidates_sqli.txt`, `js_files.txt`) directly into `vuln_scan`, `secrets_hunting`, `api_testing`, and `generate_report`, and switched Nuclei category scans from fragile relative paths to `-tags` (`cors`, `ssrf`, `redirect`, `idor`).
+  - Expanded IPv6 Cloudflare/Fastly CIDR checks in `ip_cdn_owner()` and added portable Python substitution in `new_program()`.
+- **Integrations**:
+  - `browser_capture.js` / `browser_capture.sh`: redacts sensitive keys in JSON and form-encoded POST bodies by default and filters `browser_urls_raw.txt` into `browser_urls_in_scope.txt`.
+  - `burp_api.py` / `burp.sh`: added offline `scope-export` command for Burp `advanced_mode` JSON and respected `BURP_HOST` / `BURP_PORT` env overrides.
+  - `kev-correlate.sh`: switched webhook alert JSON payload construction to `jq -n`.
+- **Tests**: Added `tests/test_recon_utils.py` and expanded `tests/test_scope_guard.py`, `tests/test_burp_api.py`, `tests/test-shell-scope.sh`, and `tests/test-pipeline-bugs.sh`; bumped `BB_VERSION` to `1.3.0`.
+
 ## [1.2.1] - 2026-11-19
 
 ### Fixed

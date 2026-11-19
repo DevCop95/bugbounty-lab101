@@ -37,7 +37,7 @@ from typing import Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from scope_guard import ScopeError, authorize  # noqa: E402
+from scope_guard import ScopeError, authorize, export_burp_scope, load_program_policies  # noqa: E402
 
 BURP_HOST = os.environ.get("BURP_HOST", "localhost")
 BURP_PORT = int(os.environ.get("BURP_PORT", "1337"))
@@ -257,11 +257,31 @@ def main() -> None:
     repeater_parser.add_argument("--url", required=True)
     repeater_parser.add_argument("--method", default="GET")
 
+    scope_exp_parser = subparsers.add_parser("scope-export", help="Export programs/*.md scope in Burp advanced_mode JSON")
+    scope_exp_parser.add_argument("--program", help="Filter to one active program")
+    scope_exp_parser.add_argument("--output", type=Path, help="Write JSON to file instead of stdout")
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         return
+
+    if args.command == "scope-export":
+        try:
+            policies = load_program_policies(PROGRAMS_DIR)
+            payload = export_burp_scope(policies, args.program)
+            rendered = json.dumps(payload, indent=2) + "\n"
+            if args.output is not None:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(rendered, encoding="utf-8")
+                print(f"Exported Burp scope JSON to {args.output}")
+            else:
+                sys.stdout.write(rendered)
+            return
+        except ScopeError as e:
+            print(f"\nScope denied: {e}", file=sys.stderr)
+            raise SystemExit(1)
 
     api = BurpAPI(args.host, args.port, args.api_key, timeout=args.timeout)
 

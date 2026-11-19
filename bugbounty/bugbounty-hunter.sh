@@ -11,8 +11,6 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BB_VERSION="1.2.0"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUGBOUNTY_DIR="$SCRIPT_DIR"
 REPORTS_DIR="$BUGBOUNTY_DIR/reports"
@@ -118,6 +116,13 @@ resolve_check() {
         return 1
     fi
 
+    if ! check_tool dig; then
+        LOCAL_IPS=$(resolve_ip "$HOST")
+        echo -e "${YELLOW}Local IP:${NC}  ${LOCAL_IPS:-unavailable}"
+        echo -e "${YELLOW}[!] 'dig' is not installed; cannot compare against public DNS (8.8.8.8 / 1.1.1.1). Install dnsutils.${NC}"
+        return 1
+    fi
+
     LOCAL_IPS=$(timeout 5 dig +short "$HOST" A 2>/dev/null | sort -u)
     PUBLIC_IPS=$( { timeout 5 dig +short @8.8.8.8 "$HOST" A 2>/dev/null; timeout 5 dig +short @1.1.1.1 "$HOST" A 2>/dev/null; } | sort -u)
     FIRST_PUBLIC_IP=$(echo "$PUBLIC_IPS" | head -1)
@@ -182,11 +187,15 @@ reconnaissance() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/recon"
     local TARGET_REGEX="${TARGET//./\\.}"
-    
+    local RESEARCH_HEADER=""
+    local -a hdr_args=()
+    RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
+    [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo -e "${CYAN}[1/8] DEEP RECONNAISSANCE - $TARGET${NC}"
-    
+
     echo -e "${YELLOW}[1.1] Subdomain Enumeration${NC}"
     local RAW_SUBDOMAINS="$OUTPUT_DIR/subdomains_raw.txt"
     : > "$RAW_SUBDOMAINS"
@@ -196,12 +205,12 @@ reconnaissance() {
     printf '%s\n' "$TARGET" >> "$RAW_SUBDOMAINS"
 
     if check_tool subfinder; then
-        subfinder -d "$TARGET" -o "$RAW_SUBDOMAINS" 2>/dev/null
+        subfinder -d "$TARGET" -silent 2>/dev/null >> "$RAW_SUBDOMAINS" || true
     else
         echo -e "${YELLOW}  [!] subfinder is not installed; continuing${NC}"
     fi
     if check_tool amass; then
-        amass enum -passive -d "$TARGET" >> "$RAW_SUBDOMAINS" 2>/dev/null
+        amass enum -passive -d "$TARGET" >> "$RAW_SUBDOMAINS" 2>/dev/null || true
     else
         echo -e "${YELLOW}  [!] amass is not installed; continuing${NC}"
     fi
@@ -212,7 +221,7 @@ reconnaissance() {
     if check_tool curl; then
         local crt_raw=""
         for _ in 1 2 3; do
-            crt_raw=$(curl -s -m 30 "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null)
+            crt_raw=$(curl -s -m 30 "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null || true)
             case "$crt_raw" in
                 "["*) break ;;              # looks like a JSON array → good
                 *) crt_raw=""; sleep 3 ;;   # 502/HTML/empty → retry
@@ -238,7 +247,7 @@ reconnaissance() {
         # than crt.sh, no API key needed for basic use. Covers crt.sh's gaps when
         # it 502s.
         local cs_raw
-        cs_raw=$(curl -s -m 30 "https://api.certspotter.com/v1/issuances?domain=${TARGET}&include_subdomains=true&expand=dns_names" 2>/dev/null)
+        cs_raw=$(curl -s -m 30 "https://api.certspotter.com/v1/issuances?domain=${TARGET}&include_subdomains=true&expand=dns_names" 2>/dev/null || true)
         case "$cs_raw" in
             "["*)
                 if check_tool jq; then
@@ -260,8 +269,8 @@ reconnaissance() {
 
     if [ -x "$BUGBOUNTY_DIR/../auto-scanner/integrations/shodan_reconsx.sh" ]; then
         "$BUGBOUNTY_DIR/../auto-scanner/integrations/shodan_reconsx.sh" \
-            "$TARGET" "$OUTPUT_DIR"
-        cat "$OUTPUT_DIR/shodan_subdomains.txt" >> "$RAW_SUBDOMAINS"
+            "$TARGET" "$OUTPUT_DIR" || true
+        [ -f "$OUTPUT_DIR/shodan_subdomains.txt" ] && cat "$OUTPUT_DIR/shodan_subdomains.txt" >> "$RAW_SUBDOMAINS"
     fi
 
     sort -u "$RAW_SUBDOMAINS" -o "$RAW_SUBDOMAINS"
@@ -270,7 +279,7 @@ reconnaissance() {
 
     SUBS=$(wc -l < "$OUTPUT_DIR/authorized_subdomains.txt")
     echo -e "${GREEN}  ✓ $SUBS subdomains found${NC}"
-    
+
     # BB_PASSIVE_ONLY=1 stops before any stage that touches the target directly
     # (httpx/katana). gau/waybackurls/crt.sh above are passive and still run.
     if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
@@ -289,15 +298,25 @@ reconnaissance() {
             # Enriched output: tech, title, server, CNAME, ASN, status — enables
             # subdomain-takeover triage and per-asset tech fingerprinting.
             httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" \
+                "${hdr_args[@]}" \
                 -td -title -server -cname -asn -status-code -json \
                 -o "$OUTPUT_DIR/httpx.json" -silent 2>/dev/null \
-                || httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null
+                || httpx -l "$OUTPUT_DIR/authorized_subdomains.txt" "${hdr_args[@]}" -o "$OUTPUT_DIR/httpx.txt" -silent 2>/dev/null || true
         fi
     fi
 
     echo -e "${YELLOW}[1.3] Wayback URLs${NC}"
-    echo "$TARGET" | gau --threads 5 2>/dev/null | sort -u > "$OUTPUT_DIR/wayback_raw.txt"
-    waybackurls "$TARGET" >> "$OUTPUT_DIR/wayback_raw.txt" 2>/dev/null
+    : > "$OUTPUT_DIR/wayback_raw.txt"
+    if check_tool gau; then
+        echo "$TARGET" | gau --threads 5 2>/dev/null >> "$OUTPUT_DIR/wayback_raw.txt" || true
+    else
+        echo -e "${YELLOW}  [!] gau is not installed; continuing${NC}"
+    fi
+    if check_tool waybackurls; then
+        waybackurls "$TARGET" >> "$OUTPUT_DIR/wayback_raw.txt" 2>/dev/null || true
+    else
+        echo -e "${YELLOW}  [!] waybackurls is not installed; continuing${NC}"
+    fi
     sort -u "$OUTPUT_DIR/wayback_raw.txt" -o "$OUTPUT_DIR/wayback_raw.txt"
     scope_filter_file "$OUTPUT_DIR/wayback_raw.txt" "$OUTPUT_DIR/wayback.txt"
 
@@ -307,18 +326,24 @@ reconnaissance() {
         echo -e "${YELLOW}[1.4] JS endpoints${NC}"
         # -cs restricts the crawl to the in-scope FQDN so it cannot wander to
         # unlisted subdomains.
-        katana -u "https://$TARGET" -d 3 -jc \
-            -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
-            -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null
+        if check_tool katana; then
+            katana -u "https://$TARGET" -d 3 -jc \
+                "${hdr_args[@]}" \
+                -cs "^https?://${TARGET_REGEX}(:[0-9]+)?(/|$)" \
+                -o "$OUTPUT_DIR/js_endpoints_raw.txt" -silent 2>/dev/null || true
+        else
+            echo -e "${YELLOW}  [!] katana not installed; skipping crawl${NC}"
+            : > "$OUTPUT_DIR/js_endpoints_raw.txt"
+        fi
         scope_filter_file "$OUTPUT_DIR/js_endpoints_raw.txt" "$OUTPUT_DIR/js_endpoints.txt"
 
         echo -e "${YELLOW}[1.4b] JS secret/endpoint analysis${NC}"
         # Pull endpoints + secrets out of discovered JS (best-effort, optional tools).
         grep -iE '\.js(\?|$)' "$OUTPUT_DIR/js_endpoints.txt" 2>/dev/null | sort -u > "$OUTPUT_DIR/js_files.txt" || true
-        if check_tool jsluice && [ -s "$OUTPUT_DIR/js_files.txt" ]; then
+        if check_tool jsluice && [ -s "$OUTPUT_DIR/js_files.txt" ] && check_tool curl; then
             while IFS= read -r jsurl; do
                 [ -n "$jsurl" ] || continue
-                curl -s "$jsurl" 2>/dev/null | jsluice urls 2>/dev/null
+                curl -s "${hdr_args[@]}" "$jsurl" 2>/dev/null | jsluice urls 2>/dev/null || true
             done < "$OUTPUT_DIR/js_files.txt" | sort -u > "$OUTPUT_DIR/js_extracted_urls.txt" || true
         elif ! check_tool jsluice; then
             echo -e "${YELLOW}  [!] jsluice not installed; skipping JS URL extraction${NC}"
@@ -326,7 +351,7 @@ reconnaissance() {
         if check_tool secretfinder && [ -s "$OUTPUT_DIR/js_files.txt" ]; then
             while IFS= read -r jsurl; do
                 [ -n "$jsurl" ] || continue
-                secretfinder -i "$jsurl" -o cli 2>/dev/null
+                secretfinder -i "$jsurl" -o cli 2>/dev/null || true
             done < "$OUTPUT_DIR/js_files.txt" >> "$OUTPUT_DIR/js_secrets.txt" || true
         fi
         # Source maps leak original source + internal routes.
@@ -336,10 +361,12 @@ reconnaissance() {
         echo -e "${YELLOW}[1.4c] API surface discovery${NC}"
         # Probe common API/spec paths (in-scope host only).
         : > "$OUTPUT_DIR/api_specs.txt"
-        for sp in /swagger.json /openapi.json /v2/api-docs /v3/api-docs /api-docs /graphql /.well-known/openid-configuration; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
-            [ "$code" = "200" ] && echo "https://${TARGET}${sp}  ($code)" >> "$OUTPUT_DIR/api_specs.txt"
-        done
+        if check_tool curl; then
+            for sp in /swagger.json /openapi.json /v2/api-docs /v3/api-docs /api-docs /graphql /.well-known/openid-configuration; do
+                code=$(curl -s "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://${TARGET}${sp}" 2>/dev/null || echo "000")
+                [ "$code" = "200" ] && echo "https://${TARGET}${sp}  ($code)" >> "$OUTPUT_DIR/api_specs.txt"
+            done
+        fi
 
         echo -e "${YELLOW}[1.4d] Browser-driven real-traffic capture${NC}"
         # Drive a real headless Chromium so we see the requests the SPA actually
@@ -353,7 +380,11 @@ reconnaissance() {
     fi
 
     echo -e "${YELLOW}[1.5] Parameter discovery${NC}"
-    grep "?" "$OUTPUT_DIR/wayback.txt" 2>/dev/null | unfurl keys 2>/dev/null | sort -u > "$OUTPUT_DIR/params.txt" || true
+    if check_tool unfurl; then
+        grep "?" "$OUTPUT_DIR/wayback.txt" 2>/dev/null | unfurl keys 2>/dev/null | sort -u > "$OUTPUT_DIR/params.txt" || true
+    else
+        : > "$OUTPUT_DIR/params.txt"
+    fi
     # Active param mining (optional tools, skipped in passive-only).
     if [ -z "${BB_PASSIVE_ONLY:-}" ]; then
         if check_tool paramspider; then
@@ -374,34 +405,63 @@ reconnaissance() {
 vuln_scan() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/vulns"
-    
+    local RESEARCH_HEADER=""
+    local -a hdr_args=()
+    RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
+    [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo -e "${CYAN}[2/8] VULNERABILITY SCANNING${NC}"
-    
-    echo -e "${YELLOW}[2.1] Nuclei scan${NC}"
-    echo "https://$TARGET" | nuclei -severity critical,high,medium -o "$OUTPUT_DIR/nuclei.txt" -silent 2>/dev/null
-    
-    echo -e "${YELLOW}[2.2] CORS misconfiguration${NC}"
-    nuclei -u "https://$TARGET" -t nuclei-templates/http/misconfiguration/cors* -o "$OUTPUT_DIR/cors.txt" -silent 2>/dev/null
-    
+
+    if check_tool nuclei; then
+        echo -e "${YELLOW}[2.1] Nuclei scan${NC}"
+        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -severity critical,high,medium -o "$OUTPUT_DIR/nuclei.txt" -silent 2>/dev/null || true
+
+        echo -e "${YELLOW}[2.2] CORS misconfiguration${NC}"
+        nuclei -u "https://$TARGET" "${hdr_args[@]}" -t nuclei-templates/http/misconfiguration/cors* -o "$OUTPUT_DIR/cors.txt" -silent 2>/dev/null || true
+    else
+        echo -e "${YELLOW}  [!] nuclei not installed; skipping template scans${NC}"
+    fi
+
     echo -e "${YELLOW}[2.3] XSS detection${NC}"
-    cat "$OUTPUT_DIR/../recon/params.txt" 2>/dev/null | head -100 | while read param; do
-        echo "https://$TARGET/?$param=test" | dalfox pipe --silence -o "$OUTPUT_DIR/xss.txt" 2>/dev/null
-    done
-    
+    local xss_candidates="$OUTPUT_DIR/xss_candidates.txt"
+    : > "$xss_candidates"
+    if [ -s "$OUTPUT_DIR/../recon/params.txt" ]; then
+        while IFS= read -r param; do
+            [ -n "$param" ] || continue
+            printf 'https://%s/?%s=test\n' "$TARGET" "$param" >> "$xss_candidates"
+        done < <(head -n 100 "$OUTPUT_DIR/../recon/params.txt")
+    fi
+    if [ -s "$xss_candidates" ] && check_tool dalfox; then
+        dalfox pipe --silence "${hdr_args[@]}" -o "$OUTPUT_DIR/xss.txt" < "$xss_candidates" 2>/dev/null || true
+    elif ! check_tool dalfox; then
+        echo -e "${YELLOW}  [!] dalfox not installed; skipping XSS scan${NC}"
+    fi
+
     echo -e "${YELLOW}[2.4] SQL Injection${NC}"
-    cat "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null | grep "=" | head -50 | sqlmap --batch --level=1 --risk=1 --output-dir="$OUTPUT_DIR/sqlmap" 2>/dev/null
-    
-    echo -e "${YELLOW}[2.5] SSRF detection${NC}"
-    echo "https://$TARGET" | nuclei -t nuclei-templates/http/vulnerabilities/ssrf* -o "$OUTPUT_DIR/ssrf.txt" -silent 2>/dev/null
-    
-    echo -e "${YELLOW}[2.6] Open redirect${NC}"
-    echo "https://$TARGET" | nuclei -t nuclei-templates/http/vulnerabilities/redirect* -o "$OUTPUT_DIR/redirect.txt" -silent 2>/dev/null
-    
-    echo -e "${YELLOW}[2.7] IDOR detection${NC}"
-    nuclei -u "https://$TARGET" -t nuclei-templates/http/vulnerabilities/idor* -o "$OUTPUT_DIR/idor.txt" -silent 2>/dev/null
-    
+    local sqlmap_targets="$OUTPUT_DIR/sqlmap_targets.txt"
+    : > "$sqlmap_targets"
+    if [ -s "$OUTPUT_DIR/../recon/wayback.txt" ]; then
+        grep "=" "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null | head -n 50 > "$sqlmap_targets" || true
+    fi
+    if [ -s "$sqlmap_targets" ] && check_tool sqlmap; then
+        sqlmap -m "$sqlmap_targets" --batch --level=1 --risk=1 "${hdr_args[@]}" --output-dir="$OUTPUT_DIR/sqlmap" 2>/dev/null || true
+    elif ! check_tool sqlmap; then
+        echo -e "${YELLOW}  [!] sqlmap not installed; skipping SQLi scan${NC}"
+    fi
+
+    if check_tool nuclei; then
+        echo -e "${YELLOW}[2.5] SSRF detection${NC}"
+        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/ssrf* -o "$OUTPUT_DIR/ssrf.txt" -silent 2>/dev/null || true
+
+        echo -e "${YELLOW}[2.6] Open redirect${NC}"
+        echo "https://$TARGET" | nuclei "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/redirect* -o "$OUTPUT_DIR/redirect.txt" -silent 2>/dev/null || true
+
+        echo -e "${YELLOW}[2.7] IDOR detection${NC}"
+        nuclei -u "https://$TARGET" "${hdr_args[@]}" -t nuclei-templates/http/vulnerabilities/idor* -o "$OUTPUT_DIR/idor.txt" -silent 2>/dev/null || true
+    fi
+
     echo -e "${GREEN}[✓] Vulnerability scanning completed${NC}"
 }
 
@@ -412,20 +472,41 @@ vuln_scan() {
 advanced_bruteforce() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/brute"
-    
+    local SECLISTS_BASE="${SECLISTS_DIR:-/usr/share/wordlists/seclists}"
+    local RESEARCH_HEADER=""
+    local -a hdr_args=()
+    RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
+    [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo -e "${CYAN}[3/8] ADVANCED BRUTE FORCE${NC}"
-    
+
+    local wl_dirs="$SECLISTS_BASE/Discovery/Web-Content/raft-large-directories.txt"
+    local wl_vhosts="$SECLISTS_BASE/Discovery/DNS/subdomains-top1million-5000.txt"
+    local wl_common="$SECLISTS_BASE/Discovery/Web-Content/common.txt"
+
     echo -e "${YELLOW}[3.1] Directory fuzzing${NC}"
-    feroxbuster -u "https://$TARGET" -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-large-directories.txt -o "$OUTPUT_DIR/dirs.txt" -q 2>/dev/null
-    
+    if check_tool feroxbuster && [ -f "$wl_dirs" ]; then
+        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" -w "$wl_dirs" -o "$OUTPUT_DIR/dirs.txt" -q 2>/dev/null || true
+    else
+        echo -e "${YELLOW}  [!] feroxbuster or wordlist missing; skipping directory fuzzing${NC}"
+    fi
+
     echo -e "${YELLOW}[3.2] VHost fuzzing${NC}"
-    feroxbuster -u "https://$TARGET" -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt --vhosts -o "$OUTPUT_DIR/vhosts.txt" -q 2>/dev/null
-    
+    if check_tool feroxbuster && [ -f "$wl_vhosts" ]; then
+        feroxbuster -u "https://$TARGET" "${hdr_args[@]}" -w "$wl_vhosts" --vhosts -o "$OUTPUT_DIR/vhosts.txt" -q 2>/dev/null || true
+    else
+        echo -e "${YELLOW}  [!] feroxbuster or wordlist missing; skipping vhost fuzzing${NC}"
+    fi
+
     echo -e "${YELLOW}[3.3] Parameter fuzzing${NC}"
-    ffuf -u "https://$TARGET/FUZZ" -w /usr/share/wordlists/seclists/Discovery/Web-Content/common.txt -o "$OUTPUT_DIR/ffuf.txt" -q 2>/dev/null
-    
+    if check_tool ffuf && [ -f "$wl_common" ]; then
+        ffuf -u "https://$TARGET/FUZZ" "${hdr_args[@]}" -w "$wl_common" -o "$OUTPUT_DIR/ffuf.txt" -q 2>/dev/null || true
+    else
+        echo -e "${YELLOW}  [!] ffuf or wordlist missing; skipping parameter fuzzing${NC}"
+    fi
+
     echo -e "${GREEN}[✓] Brute force completed${NC}"
 }
 
@@ -436,28 +517,35 @@ advanced_bruteforce() {
 secrets_hunting() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/secrets"
-    
+    local RESEARCH_HEADER=""
+    local -a hdr_args=()
+    RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
+    [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo -e "${CYAN}[4/8] SECRET HUNTING${NC}"
-    
+
     echo -e "${YELLOW}[4.1] JS secrets${NC}"
-    cat "$OUTPUT_DIR/../recon/js_endpoints.txt" 2>/dev/null | while read url; do
-        curl -s "$url" 2>/dev/null | grep -iE "(api_key|apikey|secret|token|password|aws|azure|gcp|firebase)" >> "$OUTPUT_DIR/js_secrets.txt"
-    done
-    
+    if [ -s "$OUTPUT_DIR/../recon/js_endpoints.txt" ] && check_tool curl; then
+        while IFS= read -r url; do
+            [ -n "$url" ] || continue
+            curl -s "${hdr_args[@]}" "$url" 2>/dev/null | grep -iE "(api_key|apikey|secret|token|password|aws|azure|gcp|firebase)" >> "$OUTPUT_DIR/js_secrets.txt" || true
+        done < "$OUTPUT_DIR/../recon/js_endpoints.txt"
+    fi
+
     echo -e "${YELLOW}[4.2] GitHub dorking${NC}"
     echo "Public repositories with secrets:"
     echo "  - site:github.com \"$TARGET\" password"
     echo "  - site:github.com \"$TARGET\" api_key"
     echo "  - site:github.com \"$TARGET\" secret"
-    
+
     echo -e "${YELLOW}[4.3] Cloud bucket enumeration${NC}"
     echo "Check S3/Azure/GCP buckets:"
     echo "  - https://$TARGET.s3.amazonaws.com"
     echo "  - https://$TARGET.blob.core.windows.net"
     echo "  - https://storage.googleapis.com/$TARGET"
-    
+
     echo -e "${GREEN}[✓] Secret hunting completed${NC}"
 }
 
@@ -467,9 +555,9 @@ secrets_hunting() {
 
 business_logic() {
     local TARGET="$1"
-    
+
     echo -e "${CYAN}[5/8] BUSINESS LOGIC TESTING${NC}"
-    
+
     echo -e "${YELLOW}Areas to investigate:${NC}"
     echo "  1. Authentication flow (login, registration, recovery)"
     echo "  2. Role/permission changes"
@@ -479,7 +567,7 @@ business_logic() {
     echo "  6. Race conditions"
     echo "  7. Mass assignment"
     echo "  8. IDOR on non-obvious endpoints"
-    
+
     echo -e "${GREEN}[✓] Business logic checklist generated${NC}"
 }
 
@@ -490,26 +578,57 @@ business_logic() {
 api_testing() {
     local TARGET="$1"
     local OUTPUT_DIR="$REPORTS_DIR/$TARGET/api"
-    
+    local RESEARCH_HEADER=""
+    local -a hdr_args=()
+    RESEARCH_HEADER=$(resolve_program_header "$TARGET" "$PROGRAMS_DIR" 2>/dev/null || true)
+    [ -n "$RESEARCH_HEADER" ] && hdr_args=(-H "$RESEARCH_HEADER")
+
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo -e "${CYAN}[6/8] API TESTING${NC}"
-    
+
     echo -e "${YELLOW}[6.1] API endpoint discovery${NC}"
-    cat "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null | grep -iE "(api|v1|v2|v3|graphql|rest)" > "$OUTPUT_DIR/api_endpoints.txt"
-    
+    grep -iE "(api|v1|v2|v3|graphql|rest)" "$OUTPUT_DIR/../recon/wayback.txt" 2>/dev/null > "$OUTPUT_DIR/api_endpoints.txt" || true
+
+    if [ -n "${BB_PASSIVE_ONLY:-}" ]; then
+        echo -e "${YELLOW}  [passive-only] skipping active API documentation and GraphQL probes${NC}"
+        echo -e "${GREEN}[✓] API testing completed${NC}"
+        return 0
+    fi
+
     echo -e "${YELLOW}[6.2] API documentation${NC}"
-    for path in /swagger.json /openapi.json /api-docs /swagger-ui.html /graphql; do
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$TARGET$path" 2>/dev/null)
-        if [ "$STATUS" = "200" ]; then
-            echo -e "${GREEN}  ✓ API documentation found: $path${NC}"
-            curl -s "https://$TARGET$path" >> "$OUTPUT_DIR/api_docs.json"
-        fi
-    done
-    
+    local found_records=""
+    if check_tool curl; then
+        local path status slug out_doc
+        for path in /swagger.json /openapi.json /api-docs /swagger-ui.html /graphql; do
+            status=$(curl -s "${hdr_args[@]}" -o /dev/null -w "%{http_code}" "https://$TARGET$path" 2>/dev/null || echo "000")
+            if [ "$status" = "200" ]; then
+                echo -e "${GREEN}  ✓ API documentation found: $path${NC}"
+                slug=$(printf '%s' "${path#/}" | tr '/.' '__')
+                out_doc="$OUTPUT_DIR/doc_${slug}"
+                curl -s "${hdr_args[@]}" "https://$TARGET$path" > "$out_doc" 2>/dev/null || true
+                found_records+="${path}"$'\t'"${status}"$'\t'"${out_doc}"$'\n'
+            fi
+        done
+    fi
+    python3 -c '
+import json, sys
+records = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    path, status, file_path = line.split("\t", 2)
+    records.append({"path": path, "status": int(status), "file": file_path})
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"target": sys.argv[2], "discovered": records}, fh, indent=2)
+' "$OUTPUT_DIR/api_docs_index.json" "$TARGET" <<< "$found_records"
+
     echo -e "${YELLOW}[6.3] GraphQL introspection${NC}"
-    curl -s -X POST "https://$TARGET/graphql" -H "Content-Type: application/json" -d '{"query":"{__schema{types{name,fields{name}}}}"}' > "$OUTPUT_DIR/graphql_schema.json" 2>/dev/null
-    
+    if check_tool curl; then
+        curl -s -X POST "https://$TARGET/graphql" "${hdr_args[@]}" -H "Content-Type: application/json" -d '{"query":"{__schema{types{name,fields{name}}}}"}' > "$OUTPUT_DIR/graphql_schema.json" 2>/dev/null || true
+    fi
+
     echo -e "${GREEN}[✓] API testing completed${NC}"
 }
 

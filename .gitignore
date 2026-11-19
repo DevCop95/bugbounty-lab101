@@ -1,21 +1,30 @@
 # ── Pentesting Lab — generated artifacts ────────────────────────────
-# Goal: never commit raw scan output or sensitive evidence.
+# Goal: never commit raw scan output, private program notes, or sensitive evidence.
 # Publish only manually redacted material outside these directories.
 
 # T3MP3ST integration (separate repo, updated via git pull in t3mp3st/)
 t3mp3st/
+
+# Private program scope files and engagement notes (keep README and template tracked)
+programs/*.md
+!programs/README.md
+!programs/_template.md
 
 # Logs and daemons
 *.log
 auto-scanner/logs/
 **/daemon-*.log
 
-# Raw reports and evidence may contain credentials or embargoed findings
+# Raw reports, cookies, and credentials must never be committed
 bugbounty/reports/
 auto-scanner/reports/
 reports/
 evidence/
 **/js_secrets.txt
+cookies.txt
+*credentials*.md
+*credentials*.json
+*-keys-*.json
 
 # Local databases and caches
 auto-scanner/db/

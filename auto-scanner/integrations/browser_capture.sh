@@ -45,28 +45,20 @@ fi
 # Resolve the headers to inject. Priority:
 #   1. BB_EXTRA_HEADERS (explicit JSON, used as-is)
 #   2. BB_RESEARCH_HEADER ("Name: value" -> one-entry JSON)
-#   3. auto-detect from the matching programs/*.md "Mandatory header" line
+#   3. auto-detect ONLY from the programs/*.md file authorizing this target
 if [ -z "${BB_EXTRA_HEADERS:-}" ]; then
-    if [ -n "${BB_RESEARCH_HEADER:-}" ]; then
-        hname="${BB_RESEARCH_HEADER%%:*}"
-        hval="${BB_RESEARCH_HEADER#*:}"
+    header_line="$(resolve_program_header "$TARGET_URL" "$PROGRAMS_DIR" 2>/dev/null || true)"
+    if [ -n "$header_line" ]; then
+        hname="${header_line%%:*}"
+        hval="${header_line#*:}"
         hname="$(printf '%s' "$hname" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         hval="$(printf '%s' "$hval" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        export BB_EXTRA_HEADERS
-        BB_EXTRA_HEADERS="$(printf '{"%s":"%s"}' "$hname" "$hval")"
-    else
-        # Pull a `X-...-Research: <value>` style header out of any program file
-        # whose scope covers this target. Narrow + best-effort: only matches the
-        # documented backtick form `Header: value`.
-        detected="$(grep -rohiE '`[A-Za-z-]*[Rr]esearch[A-Za-z-]*:[[:space:]]*[A-Za-z0-9_.-]+`' "$PROGRAMS_DIR" 2>/dev/null | head -n1 | tr -d '`')"
-        if [ -n "$detected" ]; then
-            hname="${detected%%:*}"
-            hval="${detected#*:}"
-            hname="$(printf '%s' "$hname" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            hval="$(printf '%s' "$hval" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        if [ -n "$hname" ] && [ -n "$hval" ]; then
             export BB_EXTRA_HEADERS
-            BB_EXTRA_HEADERS="$(printf '{"%s":"%s"}' "$hname" "$hval")"
-            log_info "Auto-detected research header from programs/: $hname"
+            BB_EXTRA_HEADERS="$(encode_header_json "$hname" "$hval")"
+            if [ -z "${BB_RESEARCH_HEADER:-}" ]; then
+                log_info "Auto-detected research header from matching program file: $hname"
+            fi
         fi
     fi
 fi

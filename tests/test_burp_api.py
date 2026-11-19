@@ -1,7 +1,9 @@
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +46,34 @@ class BurpScopeTests(unittest.TestCase):
         with self.assertRaises(burp_api.ScopeError):
             self.api.send_to_intruder({"url": "https://unauthorized.example"})
         self.assertEqual(self.requests, [])
+
+    def test_reads_api_key_from_env_and_passes_timeout_to_urlopen(self):
+        with mock.patch.dict(os.environ, {"BURP_API_KEY": "env-secret-key", "BURP_PORT": "1338"}):
+            api = burp_api.BurpAPI(timeout=12)
+        self.assertEqual(api.api_key, "env-secret-key")
+        self.assertEqual(api.headers.get("Burp-API-Key"), "env-secret-key")
+        self.assertEqual(api.base_url, "http://localhost:1338")
+
+        captured = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_urlopen(req, **kwargs):
+            captured["kwargs"] = kwargs
+            return FakeResp()
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            res = api.status()
+        self.assertEqual(res, {"ok": True})
+        self.assertEqual(captured["kwargs"].get("timeout"), 12)
 
 
 if __name__ == "__main__":

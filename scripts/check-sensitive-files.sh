@@ -10,7 +10,14 @@ if [ -n "$matches" ]; then
     exit 1
 fi
 
-sensitive_names='(^|/)(\.env($|\.)|credentials?\.(json|ya?ml)$)|\.(pem|key|p12|pfx)$'
+private_programs=$(git ls-files 'programs/*.md' | grep -vE '^programs/(README|_template)\.md$' || true)
+if [ -n "$private_programs" ]; then
+    echo "Private program files are tracked in programs/:" >&2
+    echo "$private_programs" >&2
+    exit 1
+fi
+
+sensitive_names='(^|/)(\.env($|\.)|cookies\.txt$|.*credentials.*|.*-keys-.*\.json$|credentials?\.(json|ya?ml)$)|\.(pem|key|p12|pfx)$'
 matches=$(git ls-files | grep -Ei "$sensitive_names" || true)
 if [ -n "$matches" ]; then
     echo "Sensitive credential files are tracked:" >&2
@@ -26,4 +33,4 @@ if [ -n "$matches" ]; then
     exit 1
 fi
 
-echo "No raw reports, credential files, or common secret patterns are tracked."
+echo "No raw reports, private program files, credential files, or common secret patterns are tracked."

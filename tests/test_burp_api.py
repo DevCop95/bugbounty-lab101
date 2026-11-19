@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -74,6 +75,16 @@ class BurpScopeTests(unittest.TestCase):
             res = api.status()
         self.assertEqual(res, {"ok": True})
         self.assertEqual(captured["kwargs"].get("timeout"), 12)
+
+    def test_scope_export_cli_generates_burp_advanced_mode_json(self):
+        out_file = Path(self.tempdir.name) / "burp_scope.json"
+        with mock.patch.object(sys, "argv", ["burp_api.py", "scope-export", "--program", "program", "--output", str(out_file)]):
+            burp_api.main()
+        payload = json.loads(out_file.read_text(encoding="utf-8"))
+        scope_obj = payload["target"]["scope"]
+        self.assertTrue(scope_obj["advanced_mode"])
+        self.assertEqual(scope_obj["include"][0]["host"], r"^example\.com$")
+        self.assertEqual(scope_obj["exclude"][0]["host"], r"^blocked\.example\.com$")
 
 
 if __name__ == "__main__":

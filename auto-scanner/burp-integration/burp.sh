@@ -12,9 +12,9 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Default configuration
-BURP_HOST="localhost"
-BURP_PORT="1337"
+# Default configuration (respect environment overrides)
+BURP_HOST="${BURP_HOST:-localhost}"
+BURP_PORT="${BURP_PORT:-1337}"
 
 show_help() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -29,6 +29,7 @@ show_help() {
     echo "  proxy history       - View proxy history"
     echo "  target add <url>    - Add URL to target"
     echo "  target scope        - View target scope"
+    echo "  scope-export [p][o] - Export programs/*.md to Burp Suite JSON"
     echo "  spider <url>        - Start spider"
     echo "  scan <url>          - Active scan"
     echo "  issues              - View findings"
@@ -40,8 +41,9 @@ show_help() {
     echo "Examples:"
     echo "  $0 status"
     echo "  $0 proxy on"
-    echo "  $0 target add https://ejemplo.com"
-    echo "  $0 scan https://ejemplo.com"
+    echo "  $0 target add https://example.com"
+    echo "  $0 scope-export acme-corp burp_scope.json"
+    echo "  $0 scan https://example.com"
     echo "  $0 issues export"
 }
 
@@ -101,21 +103,22 @@ show_config() {
     fi
 }
 
-# Check if Burp is running
-if ! check_burp_running && [ "$1" != "launch" ] && [ "$1" != "config" ] && [ "$1" != "help" ] && [ "$1" != "--help" ]; then
+# Check if Burp is running (not needed for offline commands)
+_cmd="${1:-help}"
+if ! check_burp_running && [ "$_cmd" != "launch" ] && [ "$_cmd" != "config" ] && [ "$_cmd" != "help" ] && [ "$_cmd" != "--help" ] && [ "$_cmd" != "-h" ] && [ "$_cmd" != "scope-export" ]; then
     echo -e "${RED}Burp Suite is not running${NC}"
     echo -e "${YELLOW}Run: $0 launch${NC}"
     echo ""
-    read -p "Launch Burp Suite now? (y/n): " -n 1 -r
+    read -r -p "Launch Burp Suite now? (y/n): " -n 1
     echo ""
-    if [[ $REPLY =~ ^[Ss]$ ]]; then
+    if [[ "$REPLY" =~ ^[YySs]$ ]]; then
         launch_burp
         sleep 5
     fi
 fi
 
 # Execute command
-case "${1:-help}" in
+case "$_cmd" in
     status)
         python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" status
         ;;
@@ -138,7 +141,7 @@ case "${1:-help}" in
     target)
         case "${2:-}" in
             add)
-                python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" target add "$3"
+                python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" target add "${3:-}"
                 ;;
             scope|list)
                 python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" target scope
@@ -148,11 +151,17 @@ case "${1:-help}" in
                 ;;
         esac
         ;;
+    scope-export)
+        _exp_args=(scope-export)
+        [ -n "${2:-}" ] && _exp_args+=(--program "$2")
+        [ -n "${3:-}" ] && _exp_args+=(--output "$3")
+        python3 "$PYTHON" "${_exp_args[@]}"
+        ;;
     spider)
-        python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" spider start "$2"
+        python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" spider start "${2:-}"
         ;;
     scan)
-        if [ -n "$2" ]; then
+        if [ -n "${2:-}" ]; then
             python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" scan start "$2"
         else
             python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" scan status
@@ -164,7 +173,7 @@ case "${1:-help}" in
                 python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" issues export
                 ;;
             details)
-                python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" issues details "$3"
+                python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" issues details "${3:-}"
                 ;;
             *)
                 python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" issues list
@@ -172,7 +181,7 @@ case "${1:-help}" in
         esac
         ;;
     repeater)
-        python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" repeater --url "$2"
+        python3 "$PYTHON" --host "$BURP_HOST" --port "$BURP_PORT" repeater --url "${2:-}"
         ;;
     launch)
         launch_burp

@@ -13,7 +13,7 @@ umask 077
 
 # Version
 # shellcheck disable=SC2034
-BB_VERSION="1.2.1"
+BB_VERSION="1.3.0"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -38,6 +38,8 @@ REPO_ROOT="$(cd "$COMMON_LIB_DIR/../.." && pwd)"
 readonly COMMON_LIB_DIR REPO_ROOT
 readonly PROGRAMS_DIR="$REPO_ROOT/programs"
 readonly SCOPE_GUARD="$REPO_ROOT/scripts/scope_guard.py"
+# shellcheck disable=SC2034
+readonly RECON_UTILS="$REPO_ROOT/scripts/recon_utils.py"
 
 normalize_target() {
     python3 "$SCOPE_GUARD" --normalize "$1"
@@ -88,20 +90,33 @@ resolve_program_header() {
         return 0
     fi
 
-    local result prog_file detected hname hval
-    if ! result=$(python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" "$target" 2>/dev/null); then
+    local policy_json hdr
+    if ! policy_json=$(python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" --policy-json "$target" 2>/dev/null); then
         return 1
     fi
-    prog_file="${result#*$'\t'}"
-    [ -f "$prog_file" ] || return 0
+    hdr=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get("research_header") or "")' "$policy_json" 2>/dev/null || true)
+    [ -n "$hdr" ] && printf '%s\n' "$hdr"
+    return 0
+}
 
-    detected="$(grep -oiE '`[A-Za-z-]*[Rr]esearch[A-Za-z-]*:[[:space:]]*[^`]+`' "$prog_file" 2>/dev/null | head -n1 | tr -d '`')"
-    if [ -n "$detected" ]; then
-        hname="${detected%%:*}"
-        hval="${detected#*:}"
-        hname="$(printf '%s' "$hname" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        hval="$(printf '%s' "$hval" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        [ -n "$hname" ] && [ -n "$hval" ] && printf '%s: %s\n' "$hname" "$hval"
+resolve_program_rate_limit() {
+    local target="$1"
+    local programs_dir="${2:-$PROGRAMS_DIR}"
+    local default_rate=10
+
+    if [[ "${BB_RATE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "$BB_RATE_LIMIT"
+        return 0
+    fi
+
+    local policy_json rl=""
+    if policy_json=$(python3 "$SCOPE_GUARD" --programs-dir "$programs_dir" --policy-json "$target" 2>/dev/null); then
+        rl=$(python3 -c 'import json, sys; v=json.loads(sys.argv[1]).get("rate_limit"); print(v if isinstance(v, int) and v > 0 else "")' "$policy_json" 2>/dev/null || true)
+    fi
+    if [[ "$rl" =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "$rl"
+    else
+        printf '%s\n' "$default_rate"
     fi
 }
 
@@ -147,8 +162,10 @@ cdn = {
     "Cloudflare": ["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22",
         "103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20",
         "188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15",
-        "104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22"],
-    "Fastly":   ["151.101.0.0/16","199.232.0.0/16"],
+        "104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
+        "2400:cb00::/32","2606:4700::/32","2803:f800::/32","2405:b500::/32",
+        "2405:8100::/32","2a06:98c0::/29","2c0f:f248::/32"],
+    "Fastly":   ["151.101.0.0/16","199.232.0.0/16","2a04:4e40::/32","2a04:4e42::/32"],
     "Akamai":   ["23.32.0.0/11","23.192.0.0/11","104.64.0.0/10","184.24.0.0/13","2.16.0.0/13"],
     "Incapsula":["198.143.32.0/19","149.126.72.0/21","103.28.248.0/22"],
     "Sucuri":   ["192.88.134.0/23","185.93.228.0/22","66.248.200.0/22"],

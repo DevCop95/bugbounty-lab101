@@ -80,17 +80,21 @@ chmod +x bugbounty/*.sh auto-scanner/*.sh
 git submodule update --init --recursive
 ```
 
-### 2. Document program scope
+### 2. Document or import program scope
 ```bash
 cd bugbounty
 ./bugbounty-hunter.sh new program-name
-# Edit ../programs/program-name.md with the EXACT scope from the H1 policy
+# Edit ../programs/program-name.md with the EXACT scope from the program policy
+# OR import directly from HackerOne CSV / bounty-targets JSON / scope TXT:
+./bugbounty-hunter.sh scope-import h1-scope.csv program-name
 ```
 
 ### 3. Verify scope and scan
 ```bash
-./bugbounty-hunter.sh scope target.com     # must say "Scope OK" before proceeding
-./bugbounty-hunter.sh full target.com       # recon -> vuln -> brute -> secrets -> api -> report
+./bugbounty-hunter.sh scope target.com          # must say "Scope OK" before proceeding
+./bugbounty-hunter.sh scope-explain target.com  # inspect matching rule, status, header & rate limit
+./bugbounty-hunter.sh scope-audit               # check all programs/*.md for conflicts & stale dates
+./bugbounty-hunter.sh full target.com --resume  # recon -> vuln -> brute -> secrets -> api -> report
 ```
 
 ### 4. Report
@@ -147,12 +151,17 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 | Command | Description | Example |
 |---------|-------------|---------|
 | `bugbounty-hunter.sh new <prog>` | Create scope tracker for a program | `./bugbounty-hunter.sh new acme-corp` |
-| `bugbounty-hunter.sh scope <target>` | Verify target is in scope | `./bugbounty-hunter.sh scope target.com` |
+| `bugbounty-hunter.sh scope <target>` | Verify target is in scope (+ policy summary) | `./bugbounty-hunter.sh scope target.com` |
+| `bugbounty-hunter.sh scope-explain <t>` | Explain matching rule, port/path, header, rate limit | `./bugbounty-hunter.sh scope-explain https://target.com/api` |
+| `bugbounty-hunter.sh scope-audit` | Audit `programs/*.md` for errors, staleness, conflicts | `./bugbounty-hunter.sh scope-audit` |
+| `bugbounty-hunter.sh scope-import <f> <p>` | Import H1 CSV / JSON / TXT into `programs/<p>.md` | `./bugbounty-hunter.sh scope-import h1.csv acme` |
+| `bugbounty-hunter.sh scope-export <fmt>` | Export active scope (`burp`, `json`, `txt`, `domains`, `wildcards`, `cidrs`) | `./bugbounty-hunter.sh scope-export burp acme burp.json` |
+| `bugbounty-hunter.sh scope-diff <o> <n>` | Diff Added/Removed rules between two scope files | `./bugbounty-hunter.sh scope-diff old.md new.csv` |
 | `bugbounty-hunter.sh resolve <host>` | Detect local DNS hijacking / sinkholes | `./bugbounty-hunter.sh resolve target.com` |
-| `bugbounty-hunter.sh full <target>` | Full pipeline (recon to report) | `./bugbounty-hunter.sh full target.com` |
-| `bugbounty-hunter.sh recon <target>` | Recon only (`--passive-only` skips active steps) | `./bugbounty-hunter.sh recon target.com` |
-| `bugbounty-hunter.sh report <target>` | Generate report with H1 template | `./bugbounty-hunter.sh report target.com` |
-| `browser_capture.sh <url>` | Headless Chromium traffic/XHR/WS capture | `./auto-scanner/integrations/browser_capture.sh https://target.com` |
+| `bugbounty-hunter.sh full <target>` | Full pipeline (`--resume`, `--fresh`, `--rate-limit N`, `--passive-only`) | `./bugbounty-hunter.sh full target.com --resume` |
+| `bugbounty-hunter.sh recon <target>` | Recon (`parse-httpx`, `clean-urls`, baseline diff) | `./bugbounty-hunter.sh recon target.com --passive-only` |
+| `bugbounty-hunter.sh report <target>` | Render H1 template + recon/vuln telemetry table | `./bugbounty-hunter.sh report target.com` |
+| `browser_capture.sh <url>` | Headless Chromium traffic/XHR/WS + body redaction | `./auto-scanner/integrations/browser_capture.sh https://target.com` |
 | `scripts/duplicate_check.py <q>` | Check past reports + build Hacktivity query | `python3 scripts/duplicate_check.py "idor booking"` |
 | `pentest.sh <url>` | Generic arsenal (400+ tools) | `pentest.sh https://target.com` |
 | `pentest.sh matrix` | Full tool matrix | `pentest.sh matrix` |
@@ -164,7 +173,7 @@ T3MP3ST works without API keys by connecting your local AI agent (Claude Code, C
 
 </div>
 
-All active scanning commands in `bugbounty-hunter.sh` verify scope against `programs/*.md` before touching the target, batch-filter discovered hosts with `scripts/scope_guard.py --filter-file`, and automatically resolve the program's research/identification header (from `BB_EXTRA_HEADERS`, `BB_RESEARCH_HEADER`, or ONLY the matching `programs/<program>.md` file). Browser traffic captures redact sensitive `Authorization`/`Cookie` headers by default (`BB_CAPTURE_UNREDACTED=1` to keep raw headers locally). Passive Shodan CTL integration is optional and uses the pinned `vendor/shodan_reconsx` submodule when `recons101x` is not installed.
+All active scanning commands in `bugbounty-hunter.sh` verify scope against active `programs/*.md` files before touching the target (exact hosts, `*.` and label-glob wildcards, CIDRs, `host:port`, and path-scoped URLs), enforce program `Status` (`Paused`/`Retired` block active scans while exclusions remain enforced), batch-filter discovered hosts with `scripts/scope_guard.py --filter-file`, automatically apply resolved program rate limits (`--rate-limit <N>` or `Special Rules` or safe `10 req/s` default), and resolve the program's research/identification header (from `BB_EXTRA_HEADERS`, `BB_RESEARCH_HEADER`, or ONLY the matching `programs/<program>.md` file). Browser traffic captures redact sensitive `Authorization`/`Cookie` headers and credential POST fields by default (`BB_CAPTURE_UNREDACTED=1` to keep raw data locally). Passive Shodan CTL integration is optional and uses the pinned `vendor/shodan_reconsx` submodule when `recons101x` is not installed.
 
 ---
 
@@ -356,8 +365,9 @@ bugbounty-lab/
 │   ├── README.md
 │   └── _template.md
 │
-├── scripts/                        # Scope guard, duplicate checker, secret gate
-│   ├── scope_guard.py              # Single & batch (--filter-file) scope validator
+├── scripts/                        # Scope engine, recon parser/normalizer, duplicate & secret gates
+│   ├── scope_guard.py              # Scope v2: path/port/glob matching, audit, diff, import/export
+│   ├── recon_utils.py              # httpx JSON parser, URL cleaner/bucketing, baseline diff, reports
 │   ├── duplicate_check.py          # Pre-submission self-duplicate & Hacktivity helper
 │   └── check-sensitive-files.sh    # Prevents committing raw reports/credentials/programs
 │
@@ -391,11 +401,13 @@ bugbounty-lab/
 
 ### Environment Variables & Local Testing
 
-- `BB_PASSIVE_ONLY=1` (or `--passive-only`): skips all active probing (`httpx`, `katana`, `browser_capture`, active API/GraphQL checks).
+- `BB_PASSIVE_ONLY=1` (or `--passive-only`): skips all active probing (`httpx`, `katana`, `browser_capture`, active JS fetching, active API/GraphQL checks).
+- `BB_RATE_LIMIT=<N>` (or `--rate-limit <N>`): overrides resolved program rate limit for `httpx`, `katana`, `nuclei`, `feroxbuster`, and `ffuf` (default `10 req/s`).
+- `BB_SCOPE_MAX_AGE_DAYS=<N>`: review age warning threshold in `scope_guard.py` (default `30` days; `0` disables).
 - `BB_RESEARCH_HEADER="X-HackerOne-Research: <handle>"`: overrides program header auto-detection across active scanners and `browser_capture.sh`.
 - `BB_EXTRA_HEADERS='{"Header":"val"}'`: raw JSON header override for `browser_capture.js`.
-- `BB_CAPTURE_UNREDACTED=1`: keeps raw `Authorization`/`Cookie` headers in `browser_capture_raw.json` (redacted as `[REDACTED]` by default).
-- `BURP_HOST`, `BURP_PORT`, `BURP_API_KEY`: configure `auto-scanner/burp-integration/burp_api.py` without hardcoding secrets.
+- `BB_CAPTURE_UNREDACTED=1`: keeps raw `Authorization`/`Cookie` headers and POST secret fields in `browser_capture_raw.json` (redacted as `[REDACTED]` by default).
+- `BURP_HOST`, `BURP_PORT`, `BURP_API_KEY`: configure `auto-scanner/burp-integration/burp_api.py` and `burp.sh` without hardcoding secrets.
 - `SECLISTS_DIR`: overrides default `/usr/share/wordlists/seclists` path for Phase 3 fuzzing.
 
 Run the full test and security suite locally:

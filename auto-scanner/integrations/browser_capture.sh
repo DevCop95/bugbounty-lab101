@@ -74,7 +74,12 @@ node "$SCRIPT_DIR/browser_capture.js" "$TARGET_URL" "$OUTPUT_DIR"
 rc=$?
 
 case "$rc" in
-    0) log_info "Capture written to $OUTPUT_DIR/browser_capture.json (+ _raw.json, browser_endpoints.txt)" ;;
+    0)
+        if [ -f "$OUTPUT_DIR/browser_urls_raw.txt" ]; then
+            scope_filter_file "$OUTPUT_DIR/browser_urls_raw.txt" "$OUTPUT_DIR/browser_urls_in_scope.txt" || true
+        fi
+        log_info "Capture written to $OUTPUT_DIR/browser_capture.json (+ _raw.json, browser_endpoints.txt, browser_urls_in_scope.txt)"
+        ;;
     3) log_warning "Playwright not installed. Run: npm install playwright && npx playwright install chromium" ;;
     *) log_warning "Browser capture exited with code $rc" ;;
 esac
